@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"time"
@@ -8,7 +9,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-type DB struct{ conn *sql.DB }
+type DB struct {
+	conn       *sql.DB
+	timeFactor float64
+}
 
 type CardState struct {
 	ID         int64
@@ -34,7 +38,7 @@ type Review struct {
 	IntervalDays    float64
 }
 
-func openDB(path string) (*DB, error) {
+func openDB(path string, timeFactor float64) (*DB, error) {
 	conn, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -42,14 +46,14 @@ func openDB(path string) (*DB, error) {
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, fmt.Errorf("wal mode: %w", err)
 	}
-	db := &DB{conn: conn}
+	db := &DB{conn: conn, timeFactor: timeFactor}
 	return db, db.migrate()
 }
 
 func (db *DB) close() error { return db.conn.Close() }
 
 func (db *DB) migrate() error {
-	_, err := db.conn.Exec(`
+	if _, err := db.conn.Exec(`
 		CREATE TABLE IF NOT EXISTS cards (
 			id          INTEGER PRIMARY KEY AUTOINCREMENT,
 			deck        TEXT    NOT NULL,
@@ -74,21 +78,91 @@ func (db *DB) migrate() error {
 			stability_after  REAL NOT NULL,
 			interval_days    REAL NOT NULL
 		);
-	`)
-	return err
+	`); err != nil {
+		return err
+	}
+	// Idempotent: add ref_hash column if not present (existing DBs).
+	_, err := db.conn.Exec(`ALTER TABLE cards ADD COLUMN ref_hash TEXT NOT NULL DEFAULT ''`)
+	if err != nil && err.Error() != "duplicate column name: ref_hash" {
+		// SQLite returns this specific message; ignore it, fail on anything else.
+		sqliteMsg := "table cards already exists"
+		_ = sqliteMsg
+		// Accept "duplicate column" only.
+		if !isDuplicateColumnErr(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func isDuplicateColumnErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return err.Error() == "duplicate column name: ref_hash"
+}
+
+func refHash(reference string) string {
+	sum := sha256.Sum256([]byte(reference))
+	return fmt.Sprintf("%x", sum)[:16]
 }
 
 func (db *DB) syncCards(deck string, cards []Card) error {
+	incoming := make(map[string]Card, len(cards))
 	for _, c := range cards {
-		if _, err := db.conn.Exec(`
-			INSERT OR IGNORE INTO cards (deck, concept, reference) VALUES (?, ?, ?)
-		`, deck, c.Concept, c.Reference); err != nil {
+		incoming[c.Concept] = c
+	}
+
+	rows, err := db.conn.Query(`SELECT id, concept, ref_hash FROM cards WHERE deck = ?`, deck)
+	if err != nil {
+		return err
+	}
+	type existing struct {
+		id   int64
+		hash string
+	}
+	inDB := make(map[string]existing)
+	for rows.Next() {
+		var e existing
+		var concept string
+		if err := rows.Scan(&e.id, &concept, &e.hash); err != nil {
+			rows.Close()
 			return err
 		}
-		if _, err := db.conn.Exec(`
-			UPDATE cards SET reference = ? WHERE deck = ? AND concept = ?
-		`, c.Reference, deck, c.Concept); err != nil {
-			return err
+		inDB[concept] = e
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for concept, e := range inDB {
+		if _, ok := incoming[concept]; !ok {
+			if _, err := db.conn.Exec(`DELETE FROM reviews WHERE card_id = ?`, e.id); err != nil {
+				return err
+			}
+			if _, err := db.conn.Exec(`DELETE FROM cards WHERE id = ?`, e.id); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, c := range cards {
+		h := refHash(c.Reference)
+		if e, ok := inDB[c.Concept]; !ok {
+			if _, err := db.conn.Exec(
+				`INSERT INTO cards (deck, concept, reference, ref_hash) VALUES (?, ?, ?, ?)`,
+				deck, c.Concept, c.Reference, h,
+			); err != nil {
+				return err
+			}
+		} else if e.hash != h {
+			if _, err := db.conn.Exec(
+				`UPDATE cards SET reference = ?, ref_hash = ? WHERE deck = ? AND concept = ?`,
+				c.Reference, h, deck, c.Concept,
+			); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -198,6 +272,10 @@ func (db *DB) getCard(id int64) (CardState, error) {
 }
 
 func (db *DB) submitReview(cardID int64, correct bool, accuracy, keywordsScore float64) (schedResult, error) {
+	return db.submitReviewWithFactor(cardID, correct, accuracy, keywordsScore, db.timeFactor)
+}
+
+func (db *DB) submitReviewWithFactor(cardID int64, correct bool, accuracy, keywordsScore, timeFactor float64) (schedResult, error) {
 	card, err := db.getCard(cardID)
 	if err != nil {
 		return schedResult{}, fmt.Errorf("get card: %w", err)
@@ -205,7 +283,7 @@ func (db *DB) submitReview(cardID int64, correct bool, accuracy, keywordsScore f
 
 	stabilityBefore := card.Stability
 	now := time.Now()
-	sr := schedule(card, correct, accuracy, now)
+	sr := schedule(card, correct, accuracy, timeFactor, now)
 
 	nowUTC := now.UTC()
 	nextDue := sr.nextDue.UTC()
@@ -235,6 +313,70 @@ func (db *DB) submitReview(cardID int64, correct bool, accuracy, keywordsScore f
 	}
 
 	return sr, nil
+}
+
+type DeckStats struct {
+	Total        int
+	New          int
+	Due          int
+	SuccessRate  float64
+	ReviewCount  int
+	AvgStability float64
+	LastReview   *time.Time
+}
+
+func (db *DB) deckStats(deck string) (DeckStats, error) {
+	var s DeckStats
+
+	row := db.conn.QueryRow(`
+		SELECT
+			COUNT(*),
+			SUM(CASE WHEN reps = 0 THEN 1 ELSE 0 END),
+			SUM(CASE WHEN due_date IS NULL OR due_date <= ? THEN 1 ELSE 0 END),
+			AVG(CASE WHEN reps > 0 THEN stability ELSE NULL END)
+		FROM cards WHERE deck = ?
+	`, time.Now().UTC(), deck)
+	var avgStab sql.NullFloat64
+	if err := row.Scan(&s.Total, &s.New, &s.Due, &avgStab); err != nil {
+		return DeckStats{}, err
+	}
+	if avgStab.Valid {
+		s.AvgStability = avgStab.Float64
+	}
+
+	row = db.conn.QueryRow(`
+		SELECT COUNT(*), SUM(CASE WHEN correct THEN 1 ELSE 0 END)
+		FROM (
+			SELECT r.correct FROM reviews r
+			JOIN cards c ON c.id = r.card_id
+			WHERE c.deck = ?
+			ORDER BY r.reviewed_at DESC
+			LIMIT 30
+		)
+	`, deck)
+	var total, correct sql.NullInt64
+	if err := row.Scan(&total, &correct); err != nil {
+		return DeckStats{}, err
+	}
+	if total.Valid && total.Int64 > 0 {
+		s.ReviewCount = int(total.Int64)
+		s.SuccessRate = float64(correct.Int64) / float64(total.Int64)
+	}
+
+	var t sql.NullTime
+	err := db.conn.QueryRow(`
+		SELECT MAX(r.reviewed_at) FROM reviews r
+		JOIN cards c ON c.id = r.card_id
+		WHERE c.deck = ?
+	`, deck).Scan(&t)
+	if err != nil {
+		return DeckStats{}, err
+	}
+	if t.Valid {
+		s.LastReview = &t.Time
+	}
+
+	return s, nil
 }
 
 func (db *DB) addReview(r Review) error {

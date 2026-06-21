@@ -37,6 +37,9 @@ func main() {
 	}
 
 	switch rest[0] {
+	case "help":
+		printUsage()
+		os.Exit(0)
 	case "serve":
 		runServeCmd()
 	case "push":
@@ -51,12 +54,6 @@ func main() {
 			os.Exit(1)
 		}
 		runListCmd(rest[1])
-	case "ps":
-		if len(rest) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: flash ps <host>")
-			os.Exit(1)
-		}
-		runPSCmd(rest[1])
 	case "show":
 		if len(rest) != 2 {
 			fmt.Fprintln(os.Stderr, "usage: flash show <host:deck.md>")
@@ -69,6 +66,18 @@ func main() {
 			os.Exit(1)
 		}
 		runRmCmd(rest[1])
+	case "pull":
+		if len(rest) != 2 {
+			fmt.Fprintln(os.Stderr, "usage: flash pull <host:deck.md>")
+			os.Exit(1)
+		}
+		runPullCmd(rest[1])
+	case "stats":
+		if len(rest) != 2 {
+			fmt.Fprintln(os.Stderr, "usage: flash stats <deck.md>|<host:deck.md>")
+			os.Exit(1)
+		}
+		runStatsCmd(rest[1])
 	default:
 		if len(rest) != 1 {
 			printUsage()
@@ -92,26 +101,6 @@ func parseTarget(arg string) (host, deckName string, isRemote bool) {
 	return
 }
 
-func runPSCmd(host string) {
-	cfg := loadConfig("", "")
-	if resolved, ok := cfg.Aliases[host]; ok {
-		host = resolved
-	}
-	rs := newRemoteStore(host, "", cfg.RemoteToken, cfg.RemotePort)
-	decks, err := rs.ps()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: ps: %v\n", err)
-		os.Exit(1)
-	}
-	if len(decks) == 0 {
-		fmt.Println("No decks loaded.")
-		return
-	}
-	for _, d := range decks {
-		fmt.Println(d)
-	}
-}
-
 func runShowCmd(target string) {
 	host, deckName, isRemote := parseTarget(target)
 	if !isRemote {
@@ -122,7 +111,7 @@ func runShowCmd(target string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
 	info, err := rs.showDeck()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: show: %v\n", err)
@@ -148,7 +137,7 @@ func runRmCmd(target string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
 	if err := rs.deleteDeck(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: rm: %v\n", err)
 		os.Exit(1)
@@ -161,18 +150,24 @@ func runListCmd(host string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, "", cfg.RemoteToken, cfg.RemotePort)
-	decks, err := rs.listDecks()
+	rs := newRemoteStore(host, "", cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	items, err := rs.listDecks()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: list: %v\n", err)
 		os.Exit(1)
 	}
-	if len(decks) == 0 {
+	if len(items) == 0 {
 		fmt.Println("No decks on server.")
 		return
 	}
-	for _, d := range decks {
-		fmt.Println(d)
+	maxLen := 0
+	for _, d := range items {
+		if len(d.Name) > maxLen {
+			maxLen = len(d.Name)
+		}
+	}
+	for _, d := range items {
+		fmt.Printf("%-*s  %d/%d\n", maxLen, d.Name, d.Due, d.Total)
 	}
 }
 
@@ -203,7 +198,7 @@ func runPushCmd(target string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
 	if err := rs.pushDeck(content); err != nil {
 		fmt.Fprintf(os.Stderr, "error: push: %v\n", err)
 		os.Exit(1)
@@ -234,7 +229,7 @@ func runLocalStudy(deckPath, deckName string, reset bool, cliDB string) {
 
 	cfg := loadConfig(deckPath, cliDB)
 
-	database, err := openDB(cfg.DB)
+	database, err := openDB(cfg.DB, cfg.TimeFactor)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -286,7 +281,7 @@ func runRemoteStudy(host, deckName string, reset bool) {
 		os.Exit(1)
 	}
 
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
 
 	if reset {
 		if err := rs.resetDeck(); err != nil {
@@ -326,14 +321,106 @@ func runTUI(m model) {
 	}
 }
 
+func runPullCmd(target string) {
+	host, deckName, isRemote := parseTarget(target)
+	if !isRemote {
+		fmt.Fprintln(os.Stderr, "error: pull requires <host:deck.md> syntax")
+		os.Exit(1)
+	}
+	localFile := target[strings.Index(target, ":")+1:]
+	cfg := loadConfig("", "")
+	if resolved, ok := cfg.Aliases[host]; ok {
+		host = resolved
+	}
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	content, err := rs.pullDeck()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: pull: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(localFile, content, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", localFile, err)
+		os.Exit(1)
+	}
+	fmt.Printf("Pulled %s from %s.\n", localFile, host)
+}
+
+func runStatsCmd(arg string) {
+	host, deckName, isRemote := parseTarget(arg)
+
+	if isRemote {
+		runRemoteStats(host, deckName)
+	} else {
+		runLocalStats(arg, deckName)
+	}
+}
+
+func runLocalStats(deckPath, deckName string) {
+	cfg := loadConfig(deckPath, "")
+	db, err := openDB(cfg.DB, cfg.TimeFactor)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.close()
+	printStats(deckName, db)
+}
+
+func runRemoteStats(host, deckName string) {
+	cfg := loadConfig("", "")
+	if resolved, ok := cfg.Aliases[host]; ok {
+		host = resolved
+	}
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	stats, err := rs.deckStats()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: stats: %v\n", err)
+		os.Exit(1)
+	}
+	printDeckStats(deckName, stats)
+}
+
+func printStats(deckName string, db *DB) {
+	stats, err := db.deckStats(deckName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: stats: %v\n", err)
+		os.Exit(1)
+	}
+	printDeckStats(deckName, stats)
+}
+
+func printDeckStats(deckName string, s DeckStats) {
+	fmt.Printf("deck:          %s\n", deckName)
+	fmt.Printf("total:         %d\n", s.Total)
+	fmt.Printf("new:           %d\n", s.New)
+	fmt.Printf("due today:     %d\n", s.Due)
+	if s.ReviewCount > 0 {
+		fmt.Printf("success rate:  %.0f%%  (%d dernières révisions)\n", s.SuccessRate*100, s.ReviewCount)
+	} else {
+		fmt.Printf("success rate:  —\n")
+	}
+	if s.AvgStability > 0 {
+		fmt.Printf("avg stability: %.1f jours\n", s.AvgStability)
+	} else {
+		fmt.Printf("avg stability: —\n")
+	}
+	if s.LastReview != nil {
+		fmt.Printf("last review:   %s\n", s.LastReview.Local().Format("2006-01-02 15:04"))
+	} else {
+		fmt.Printf("last review:   never\n")
+	}
+}
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage:
   flash [flags] <deck.md>           study local deck
   flash [flags] <host:deck.md>      study remote deck
-  flash list <host>                 list decks on server
-  flash ps <host>                   list loaded decks on server
-  flash show <host:deck.md>         show deck stats
+  flash stats <deck.md>             show local deck statistics
+  flash stats <host:deck.md>        show remote deck statistics
+  flash list <host>                 list decks on server (with due/total)
+  flash show <host:deck.md>         show deck summary
   flash push <host:deck.md>         push local deck to server
+  flash pull <host:deck.md>         pull deck from server to local file
   flash rm <host:deck.md>           delete deck from server
   flash serve                       start API server
 

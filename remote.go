@@ -10,18 +10,20 @@ import (
 )
 
 type remoteStore struct {
-	baseURL string
-	deck    string
-	token   string
-	client  *http.Client
+	baseURL    string
+	deck       string
+	token      string
+	timeFactor float64
+	client     *http.Client
 }
 
-func newRemoteStore(host, deck, token string, port int) *remoteStore {
+func newRemoteStore(host, deck, token string, port int, timeFactor float64) *remoteStore {
 	return &remoteStore{
-		baseURL: fmt.Sprintf("https://%s:%d", host, port),
-		deck:    deck,
-		token:   token,
-		client:  &http.Client{Timeout: 15 * time.Second},
+		baseURL:    fmt.Sprintf("https://%s:%d", host, port),
+		deck:       deck,
+		token:      token,
+		timeFactor: timeFactor,
+		client:     &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -53,6 +55,7 @@ func (r *remoteStore) submitReview(cardID int64, correct bool, accuracy, keyword
 		Correct:       correct,
 		Accuracy:      accuracy,
 		KeywordsScore: keywordsScore,
+		TimeFactor:    r.timeFactor,
 	})
 	if err != nil {
 		return schedResult{}, err
@@ -88,16 +91,6 @@ func (r *remoteStore) deleteDeck() error {
 	return nil
 }
 
-func (r *remoteStore) ps() ([]string, error) {
-	resp, err := r.do("GET", "/ps", nil, "")
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	var decks []string
-	return decks, json.NewDecoder(resp.Body).Decode(&decks)
-}
-
 func (r *remoteStore) showDeck() (deckShowResponse, error) {
 	resp, err := r.do("GET", "/decks/"+r.deck, nil, "")
 	if err != nil {
@@ -108,14 +101,33 @@ func (r *remoteStore) showDeck() (deckShowResponse, error) {
 	return res, json.NewDecoder(resp.Body).Decode(&res)
 }
 
-func (r *remoteStore) listDecks() ([]string, error) {
+func (r *remoteStore) listDecks() ([]deckListItem, error) {
 	resp, err := r.do("GET", "/decks", nil, "")
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var decks []string
-	return decks, json.NewDecoder(resp.Body).Decode(&decks)
+	var items []deckListItem
+	return items, json.NewDecoder(resp.Body).Decode(&items)
+}
+
+func (r *remoteStore) deckStats() (DeckStats, error) {
+	resp, err := r.do("GET", "/decks/"+r.deck+"/stats", nil, "")
+	if err != nil {
+		return DeckStats{}, err
+	}
+	defer resp.Body.Close()
+	var s DeckStats
+	return s, json.NewDecoder(resp.Body).Decode(&s)
+}
+
+func (r *remoteStore) pullDeck() ([]byte, error) {
+	resp, err := r.do("GET", "/decks/"+r.deck+"/content", nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
 }
 
 // pushDeck uploads local deck content to the server.

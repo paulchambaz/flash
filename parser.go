@@ -25,7 +25,7 @@ func parseDeck(path string) ([]Card, error) {
 	flush := func() {
 		if len(block) >= 2 {
 			concept := strings.TrimSpace(block[0])
-			ref := strings.TrimSpace(strings.Join(block[1:], " "))
+			ref := strings.TrimSpace(strings.Join(block[1:], "\n"))
 			if concept != "" && ref != "" {
 				cards = append(cards, Card{Concept: concept, Reference: ref})
 			}

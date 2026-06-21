@@ -16,6 +16,7 @@ type appConfig struct {
 	Password  string
 	Model     string
 	Threshold float64
+	TimeFactor float64
 
 	ServeHost  string
 	ServePort  int
@@ -35,6 +36,7 @@ type fileConfig struct {
 	Password  string  `toml:"ollama_pass"`
 	Model     string  `toml:"ollama_model"`
 	Threshold float64 `toml:"threshold"`
+	TimeFactor float64 `toml:"time_factor"`
 
 	ServeHost  string `toml:"serve_host"`
 	ServePort  int    `toml:"serve_port"`
@@ -51,10 +53,9 @@ func loadConfig(deckPath, cliDB string) appConfig {
 	// 1. Defaults
 	cfg := appConfig{
 		OllamaURL:  "https://ollama.chambaz.xyz/api/chat",
-		Username:   "paulchambaz",
-		Password:   "TPDCS0RG9zI2TjyGFo0pABvvoyK6iDFb",
 		Model:      "qwen3:4b-instruct-2507-q4_K_M",
 		Threshold:  0.7,
+		TimeFactor: 0.7,
 		ServeHost:  "0.0.0.0",
 		ServePort:  8765,
 		RemotePort: 443,
@@ -85,6 +86,9 @@ func loadConfig(deckPath, cliDB string) appConfig {
 			}
 			if fc.Threshold > 0 {
 				cfg.Threshold = fc.Threshold
+			}
+			if fc.TimeFactor > 0 {
+				cfg.TimeFactor = fc.TimeFactor
 			}
 			if fc.ServeHost != "" {
 				cfg.ServeHost = fc.ServeHost
@@ -144,6 +148,11 @@ func loadConfig(deckPath, cliDB string) appConfig {
 	if v := os.Getenv("FLASH_REMOTE_PORT"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.RemotePort = n
+		}
+	}
+	if v := os.Getenv("FLASH_TIME_FACTOR"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+			cfg.TimeFactor = f
 		}
 	}
 	if v := os.Getenv("FLASH_REMOTE_TOKEN"); v != "" {

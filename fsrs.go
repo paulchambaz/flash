@@ -44,7 +44,7 @@ type schedResult struct {
 	reshowInSession bool // true = card comes back in the current session
 }
 
-func schedule(state CardState, correct bool, accuracy float64, now time.Time) schedResult {
+func schedule(state CardState, correct bool, accuracy, timeFactor float64, now time.Time) schedResult {
 	ep := defaultExtParams
 	var sNew, dNew float64
 
@@ -95,7 +95,7 @@ func schedule(state CardState, correct bool, accuracy float64, now time.Time) sc
 	case 1:
 		intervalDays = 3
 	default:
-		intervalDays = math.Max(1, sNew)
+		intervalDays = math.Max(1, sNew*timeFactor)
 	}
 
 	return schedResult{

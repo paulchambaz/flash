@@ -44,8 +44,8 @@ type model struct {
 	err       error
 	width     int
 	height    int
-	ev *evaluator
-	st store
+	ev        *evaluator
+	st        store
 }
 
 func newModel(deckName string, cards []CardState, deckTotal int, ev *evaluator, st store) model {
@@ -66,10 +66,10 @@ func newModel(deckName string, cards []CardState, deckTotal int, ev *evaluator, 
 		cards:     cards,
 		deckTotal: deckTotal,
 		state:     stateQuestion,
-		textarea: ta,
-		spinner:  sp,
-		ev: ev,
-		st: st,
+		textarea:  ta,
+		spinner:   sp,
+		ev:        ev,
+		st:        st,
 	}
 }
 
@@ -298,11 +298,20 @@ func renderBoldMD(md string) string {
 	})
 }
 
-// ansiWordWrap wraps s at width, measuring visible characters (ignoring ANSI codes).
+// ansiWordWrap wraps s at width, preserving existing newlines.
 func ansiWordWrap(s string, width int) string {
 	if width <= 0 {
 		return s
 	}
+	paragraphs := strings.Split(s, "\n")
+	wrapped := make([]string, len(paragraphs))
+	for i, p := range paragraphs {
+		wrapped[i] = wrapLine(p, width)
+	}
+	return strings.Join(wrapped, "\n")
+}
+
+func wrapLine(s string, width int) string {
 	words := strings.Fields(s)
 	if len(words) == 0 {
 		return s
