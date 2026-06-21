@@ -16,7 +16,6 @@
           version = "0.1.0";
           src = ./.;
           vendorHash = "sha256-J1eItW24CwGUoUpqG6iRwY/xiYKX3BHlQR1GkQx3jyo=";
-          CGO_ENABLED = 0;
           meta = {
             description = "Spaced-repetition flashcard CLI";
             mainProgram = "flash";
