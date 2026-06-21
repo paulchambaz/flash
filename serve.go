@@ -54,6 +54,10 @@ func runServe(cfg appConfig) error {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /decks",                       s.auth(s.handleListDecks))
+	mux.HandleFunc("GET /ps",                         s.auth(s.handlePS))
+	mux.HandleFunc("GET /decks/{deck}",               s.auth(s.handleShowDeck))
+	mux.HandleFunc("DELETE /decks/{deck}",            s.auth(s.handleDeleteDeck))
 	mux.HandleFunc("POST /decks/{deck}/push",         s.auth(s.handlePush))
 	mux.HandleFunc("GET /decks/{deck}/cards/due",     s.auth(s.handleDueCards))
 	mux.HandleFunc("GET /decks/{deck}/total",         s.auth(s.handleDeckTotal))
@@ -201,6 +205,89 @@ func (s *flashServer) handleReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"reset": true})
+}
+
+func (s *flashServer) handlePS(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	decks := make([]string, 0, len(s.dbs))
+	for k := range s.dbs {
+		decks = append(decks, k)
+	}
+	s.mu.RUnlock()
+	writeJSON(w, http.StatusOK, decks)
+}
+
+type deckShowResponse struct {
+	Total      int        `json:"total"`
+	Due        int        `json:"due"`
+	LastReview *time.Time `json:"last_review"`
+}
+
+func (s *flashServer) handleShowDeck(w http.ResponseWriter, r *http.Request) {
+	deck := r.PathValue("deck")
+	db, err := s.getDB(deck)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	total, err := db.deckTotal(deck)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	due, err := db.dueCount(deck)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	last, err := db.lastReviewTime(deck)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, deckShowResponse{Total: total, Due: due, LastReview: last})
+}
+
+func (s *flashServer) handleDeleteDeck(w http.ResponseWriter, r *http.Request) {
+	deck := r.PathValue("deck")
+
+	s.mu.Lock()
+	if db, ok := s.dbs[deck]; ok {
+		_ = db.close()
+		delete(s.dbs, deck)
+	}
+	s.mu.Unlock()
+
+	var errs []string
+	for _, ext := range []string{".db", ".md"} {
+		path := filepath.Join(s.dataDir, deck+ext)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": strings.Join(errs, "; ")})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+func (s *flashServer) handleListDecks(w http.ResponseWriter, r *http.Request) {
+	entries, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	var decks []string
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".db" {
+			decks = append(decks, strings.TrimSuffix(e.Name(), ".db"))
+		}
+	}
+	if decks == nil {
+		decks = []string{}
+	}
+	writeJSON(w, http.StatusOK, decks)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

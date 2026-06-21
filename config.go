@@ -57,7 +57,7 @@ func loadConfig(deckPath, cliDB string) appConfig {
 		Threshold:  0.7,
 		ServeHost:  "0.0.0.0",
 		ServePort:  8765,
-		RemotePort: 8765,
+		RemotePort: 443,
 	}
 
 	// 2. Config file (flash.cfg next to deck, then cwd)

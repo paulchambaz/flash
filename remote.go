@@ -18,7 +18,7 @@ type remoteStore struct {
 
 func newRemoteStore(host, deck, token string, port int) *remoteStore {
 	return &remoteStore{
-		baseURL: fmt.Sprintf("http://%s:%d", host, port),
+		baseURL: fmt.Sprintf("https://%s:%d", host, port),
 		deck:    deck,
 		token:   token,
 		client:  &http.Client{Timeout: 15 * time.Second},
@@ -78,6 +78,45 @@ func (r *remoteStore) submitReview(cardID int64, correct bool, accuracy, keyword
 }
 
 func (r *remoteStore) close() error { return nil }
+
+func (r *remoteStore) deleteDeck() error {
+	resp, err := r.do("DELETE", "/decks/"+r.deck, nil, "")
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
+}
+
+func (r *remoteStore) ps() ([]string, error) {
+	resp, err := r.do("GET", "/ps", nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var decks []string
+	return decks, json.NewDecoder(resp.Body).Decode(&decks)
+}
+
+func (r *remoteStore) showDeck() (deckShowResponse, error) {
+	resp, err := r.do("GET", "/decks/"+r.deck, nil, "")
+	if err != nil {
+		return deckShowResponse{}, err
+	}
+	defer resp.Body.Close()
+	var res deckShowResponse
+	return res, json.NewDecoder(resp.Body).Decode(&res)
+}
+
+func (r *remoteStore) listDecks() ([]string, error) {
+	resp, err := r.do("GET", "/decks", nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var decks []string
+	return decks, json.NewDecoder(resp.Body).Decode(&decks)
+}
 
 // pushDeck uploads local deck content to the server.
 func (r *remoteStore) pushDeck(content []byte) error {

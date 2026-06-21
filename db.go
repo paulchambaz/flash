@@ -155,6 +155,28 @@ func (db *DB) deckTotal(deck string) (int, error) {
 	return n, err
 }
 
+func (db *DB) dueCount(deck string) (int, error) {
+	var n int
+	err := db.conn.QueryRow(`
+		SELECT COUNT(*) FROM cards
+		WHERE deck = ? AND (due_date IS NULL OR due_date <= ?)
+	`, deck, time.Now().UTC()).Scan(&n)
+	return n, err
+}
+
+func (db *DB) lastReviewTime(deck string) (*time.Time, error) {
+	var t sql.NullTime
+	err := db.conn.QueryRow(`
+		SELECT MAX(r.reviewed_at) FROM reviews r
+		JOIN cards c ON c.id = r.card_id
+		WHERE c.deck = ?
+	`, deck).Scan(&t)
+	if err != nil || !t.Valid {
+		return nil, err
+	}
+	return &t.Time, nil
+}
+
 func (db *DB) getCard(id int64) (CardState, error) {
 	var c CardState
 	var lastReview, dueDate sql.NullTime
