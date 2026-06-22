@@ -247,7 +247,13 @@ func (m model) viewResult(b *strings.Builder) string {
 	b.WriteString("\n\n")
 	b.WriteString(styleLabel.Render("Référence :"))
 	b.WriteString("\n")
-	b.WriteString(ansiWordWrap(renderBoldMD(card.Reference), m.width-4))
+	ref := card.Reference
+	if m.result != nil {
+		ref = renderBoldMDEval(card.Reference, m.textarea.Value(), m.ev.cfg.threshold)
+	} else {
+		ref = renderBoldMD(ref)
+	}
+	b.WriteString(ansiWordWrap(ref, m.width-4))
 	b.WriteString("\n\n")
 	b.WriteString(divider(m.width))
 	b.WriteString("\n\n")
@@ -263,9 +269,9 @@ func (m model) viewResult(b *strings.Builder) string {
 	}
 
 	if m.result.correct {
-		b.WriteString(styleSuccess.Render("✓ Correct"))
+		b.WriteString(styleSuccess.Render("Correct"))
 	} else {
-		b.WriteString(styleError.Render("✗ Incorrect"))
+		b.WriteString(styleError.Render("Incorrect"))
 	}
 	if m.sched != nil {
 		if m.sched.reshowInSession {
@@ -295,6 +301,19 @@ func (m model) viewDone(b *strings.Builder) string {
 func renderBoldMD(md string) string {
 	return boldRe.ReplaceAllStringFunc(md, func(match string) string {
 		return lipgloss.NewStyle().Bold(true).Inline(true).Render(match[2 : len(match)-2])
+	})
+}
+
+// renderBoldMDEval replaces **text** with colored keywords:
+// present in answer → gray, absent → bold red.
+func renderBoldMDEval(md, userAnswer string, threshold float64) string {
+	normAnswer := normalizeText(userAnswer)
+	return boldRe.ReplaceAllStringFunc(md, func(match string) string {
+		kw := match[2 : len(match)-2]
+		if partialRatio(normalizeText(kw), normAnswer) >= threshold {
+			return lipgloss.NewStyle().Foreground(colorMuted).Bold(true).Inline(true).Render(kw)
+		}
+		return lipgloss.NewStyle().Foreground(colorError).Bold(true).Inline(true).Render(kw)
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -83,23 +84,10 @@ func (db *DB) migrate() error {
 	}
 	// Idempotent: add ref_hash column if not present (existing DBs).
 	_, err := db.conn.Exec(`ALTER TABLE cards ADD COLUMN ref_hash TEXT NOT NULL DEFAULT ''`)
-	if err != nil && err.Error() != "duplicate column name: ref_hash" {
-		// SQLite returns this specific message; ignore it, fail on anything else.
-		sqliteMsg := "table cards already exists"
-		_ = sqliteMsg
-		// Accept "duplicate column" only.
-		if !isDuplicateColumnErr(err) {
-			return err
-		}
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name: ref_hash") {
+		return err
 	}
 	return nil
-}
-
-func isDuplicateColumnErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	return err.Error() == "duplicate column name: ref_hash"
 }
 
 func refHash(reference string) string {
@@ -183,16 +171,19 @@ func (db *DB) dueCards(deck string) ([]CardState, error) {
 	var result []CardState
 	for rows.Next() {
 		var c CardState
-		var lastReview, dueDate sql.NullTime
+		var lastReview, dueDate sql.NullString
 		if err := rows.Scan(&c.ID, &c.Deck, &c.Concept, &c.Reference,
 			&c.Stability, &c.Difficulty, &c.Reps, &c.Lapses, &lastReview, &dueDate); err != nil {
 			return nil, err
 		}
-		if lastReview.Valid {
-			c.LastReview = &lastReview.Time
+		var terr error
+		c.LastReview, terr = scanNullTime(lastReview)
+		if terr != nil {
+			return nil, terr
 		}
-		if dueDate.Valid {
-			c.DueDate = &dueDate.Time
+		c.DueDate, terr = scanNullTime(dueDate)
+		if terr != nil {
+			return nil, terr
 		}
 		result = append(result, c)
 	}
@@ -238,22 +229,34 @@ func (db *DB) dueCount(deck string) (int, error) {
 	return n, err
 }
 
+func scanNullTime(s sql.NullString) (*time.Time, error) {
+	if !s.Valid {
+		return nil, nil
+	}
+	for _, f := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
+		if t, err := time.Parse(f, s.String); err == nil {
+			return &t, nil
+		}
+	}
+	return nil, fmt.Errorf("cannot parse time: %q", s.String)
+}
+
 func (db *DB) lastReviewTime(deck string) (*time.Time, error) {
-	var t sql.NullTime
+	var s sql.NullString
 	err := db.conn.QueryRow(`
 		SELECT MAX(r.reviewed_at) FROM reviews r
 		JOIN cards c ON c.id = r.card_id
 		WHERE c.deck = ?
-	`, deck).Scan(&t)
-	if err != nil || !t.Valid {
+	`, deck).Scan(&s)
+	if err != nil {
 		return nil, err
 	}
-	return &t.Time, nil
+	return scanNullTime(s)
 }
 
 func (db *DB) getCard(id int64) (CardState, error) {
 	var c CardState
-	var lastReview, dueDate sql.NullTime
+	var lastReview, dueDate sql.NullString
 	err := db.conn.QueryRow(`
 		SELECT id, deck, concept, reference, stability, difficulty, reps, lapses, last_review, due_date
 		FROM cards WHERE id = ?
@@ -262,11 +265,13 @@ func (db *DB) getCard(id int64) (CardState, error) {
 	if err != nil {
 		return CardState{}, err
 	}
-	if lastReview.Valid {
-		c.LastReview = &lastReview.Time
+	c.LastReview, err = scanNullTime(lastReview)
+	if err != nil {
+		return CardState{}, err
 	}
-	if dueDate.Valid {
-		c.DueDate = &dueDate.Time
+	c.DueDate, err = scanNullTime(dueDate)
+	if err != nil {
+		return CardState{}, err
 	}
 	return c, nil
 }
@@ -363,17 +368,18 @@ func (db *DB) deckStats(deck string) (DeckStats, error) {
 		s.SuccessRate = float64(correct.Int64) / float64(total.Int64)
 	}
 
-	var t sql.NullTime
+	var ts sql.NullString
 	err := db.conn.QueryRow(`
 		SELECT MAX(r.reviewed_at) FROM reviews r
 		JOIN cards c ON c.id = r.card_id
 		WHERE c.deck = ?
-	`, deck).Scan(&t)
+	`, deck).Scan(&ts)
 	if err != nil {
 		return DeckStats{}, err
 	}
-	if t.Valid {
-		s.LastReview = &t.Time
+	s.LastReview, err = scanNullTime(ts)
+	if err != nil {
+		return DeckStats{}, err
 	}
 
 	return s, nil

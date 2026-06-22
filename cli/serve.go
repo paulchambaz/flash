@@ -16,6 +16,7 @@ import (
 type flashServer struct {
 	token   string
 	dataDir string
+	evalCfg evalConfig
 	mu      sync.RWMutex
 	dbs     map[string]*DB
 }
@@ -51,6 +52,7 @@ func runServe(cfg appConfig) error {
 	s := &flashServer{
 		token:   cfg.ServeToken,
 		dataDir: dataDir,
+		evalCfg: evalConfigFrom(cfg),
 		dbs:     make(map[string]*DB),
 	}
 
@@ -64,6 +66,7 @@ func runServe(cfg appConfig) error {
 	mux.HandleFunc("GET /decks/{deck}/cards/due", s.auth(s.handleDueCards))
 	mux.HandleFunc("GET /decks/{deck}/total", s.auth(s.handleDeckTotal))
 	mux.HandleFunc("POST /decks/{deck}/cards/review", s.auth(s.handleReview))
+	mux.HandleFunc("POST /decks/{deck}/cards/evaluate", s.auth(s.handleEvaluate))
 	mux.HandleFunc("POST /decks/{deck}/reset", s.auth(s.handleReset))
 
 	addr := fmt.Sprintf("%s:%d", cfg.ServeHost, cfg.ServePort)
@@ -329,6 +332,61 @@ func (s *flashServer) handlePullDeck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(body)
+}
+
+type evaluateRequest struct {
+	CardID int64  `json:"card_id"`
+	Answer string `json:"answer"`
+}
+
+type evaluateResponse struct {
+	Correct         bool      `json:"correct"`
+	Accuracy        float64   `json:"accuracy"`
+	KeywordsScore   float64   `json:"keywords_score"`
+	ReshowInSession bool      `json:"reshow_in_session"`
+	NextDue         time.Time `json:"next_due"`
+}
+
+func (s *flashServer) handleEvaluate(w http.ResponseWriter, r *http.Request) {
+	deck := r.PathValue("deck")
+	var req evaluateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "decode body: " + err.Error()})
+		return
+	}
+
+	db, err := s.getDB(deck)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	card, err := db.getCard(req.CardID)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "card not found"})
+		return
+	}
+
+	ev := newEvaluator(s.evalCfg)
+	result, err := ev.evaluate(card.Concept, card.Reference, req.Answer)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "eval: " + err.Error()})
+		return
+	}
+
+	sr, err := db.submitReview(card.ID, result.correct, result.accuracy, result.keywordsScore)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "submit review: " + err.Error()})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, evaluateResponse{
+		Correct:         result.correct,
+		Accuracy:        result.accuracy,
+		KeywordsScore:   result.keywordsScore,
+		ReshowInSession: sr.reshowInSession,
+		NextDue:         sr.nextDue,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

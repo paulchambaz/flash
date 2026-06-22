@@ -43,11 +43,11 @@ func main() {
 	case "serve":
 		runServeCmd()
 	case "push":
-		if len(rest) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: flash push <host:deck.md>")
+		if len(rest) != 3 {
+			fmt.Fprintln(os.Stderr, "usage: flash push <deck.md> <server:> | <server:deck.md>")
 			os.Exit(1)
 		}
-		runPushCmd(rest[1])
+		runPushCmd(rest[1], rest[2])
 	case "list":
 		if len(rest) != 2 {
 			fmt.Fprintln(os.Stderr, "usage: flash list <host>")
@@ -67,11 +67,11 @@ func main() {
 		}
 		runRmCmd(rest[1])
 	case "pull":
-		if len(rest) != 2 {
-			fmt.Fprintln(os.Stderr, "usage: flash pull <host:deck.md>")
+		if len(rest) != 3 {
+			fmt.Fprintln(os.Stderr, "usage: flash pull <server:deck.md> <.> | <deck.md>")
 			os.Exit(1)
 		}
-		runPullCmd(rest[1])
+		runPullCmd(rest[1], rest[2])
 	case "stats":
 		if len(rest) != 2 {
 			fmt.Fprintln(os.Stderr, "usage: flash stats <deck.md>|<host:deck.md>")
@@ -179,18 +179,25 @@ func runServeCmd() {
 	}
 }
 
-func runPushCmd(target string) {
-	host, deckName, isRemote := parseTarget(target)
-	if !isRemote {
-		fmt.Fprintln(os.Stderr, "error: push requires <host:deck.md> syntax")
+func runPushCmd(src, dest string) {
+	idx := strings.Index(dest, ":")
+	if idx <= 0 {
+		fmt.Fprintln(os.Stderr, "error: push destination must be <server:> or <server:deck.md>")
 		os.Exit(1)
 	}
+	host := dest[:idx]
+	remotepart := dest[idx+1:]
 
-	// Local file is the filename part after the colon, read from cwd.
-	localFile := target[strings.Index(target, ":")+1:]
-	content, err := os.ReadFile(localFile)
+	var deckName string
+	if remotepart == "" {
+		deckName = strings.TrimSuffix(filepath.Base(src), filepath.Ext(src))
+	} else {
+		deckName = strings.TrimSuffix(filepath.Base(remotepart), filepath.Ext(remotepart))
+	}
+
+	content, err := os.ReadFile(src)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: read %s: %v\n", localFile, err)
+		fmt.Fprintf(os.Stderr, "error: read %s: %v\n", src, err)
 		os.Exit(1)
 	}
 
@@ -203,7 +210,7 @@ func runPushCmd(target string) {
 		fmt.Fprintf(os.Stderr, "error: push: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("Pushed %s to %s.\n", localFile, host)
+	fmt.Printf("Pushed %s to %s:%s.\n", src, host, deckName)
 }
 
 func runStudyCmd(arg string, reset bool, cliDB string) {
@@ -321,13 +328,27 @@ func runTUI(m model) {
 	}
 }
 
-func runPullCmd(target string) {
-	host, deckName, isRemote := parseTarget(target)
-	if !isRemote {
-		fmt.Fprintln(os.Stderr, "error: pull requires <host:deck.md> syntax")
+func runPullCmd(src, dest string) {
+	idx := strings.Index(src, ":")
+	if idx <= 0 {
+		fmt.Fprintln(os.Stderr, "error: pull source must be <server:deck.md>")
 		os.Exit(1)
 	}
-	localFile := target[strings.Index(target, ":")+1:]
+	host := src[:idx]
+	remoteFile := src[idx+1:]
+	if remoteFile == "" {
+		fmt.Fprintln(os.Stderr, "error: pull source must specify a deck: <server:deck.md>")
+		os.Exit(1)
+	}
+	deckName := strings.TrimSuffix(filepath.Base(remoteFile), filepath.Ext(remoteFile))
+
+	var localFile string
+	if dest == "." {
+		localFile = deckName + ".md"
+	} else {
+		localFile = dest
+	}
+
 	cfg := loadConfig("", "")
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
@@ -342,7 +363,7 @@ func runPullCmd(target string) {
 		fmt.Fprintf(os.Stderr, "error: write %s: %v\n", localFile, err)
 		os.Exit(1)
 	}
-	fmt.Printf("Pulled %s from %s.\n", localFile, host)
+	fmt.Printf("Pulled %s from %s to %s.\n", deckName, host, localFile)
 }
 
 func runStatsCmd(arg string) {
@@ -419,8 +440,10 @@ func printUsage() {
   flash stats <host:deck.md>        show remote deck statistics
   flash list <host>                 list decks on server (with due/total)
   flash show <host:deck.md>         show deck summary
-  flash push <host:deck.md>         push local deck to server
-  flash pull <host:deck.md>         pull deck from server to local file
+  flash push <deck.md> <server:>    push local deck to server (same name)
+  flash push <deck.md> <server:x>   push local deck to server as x
+  flash pull <server:deck.md> <.>   pull deck from server to current dir
+  flash pull <server:deck.md> <f>   pull deck from server to local file f
   flash rm <host:deck.md>           delete deck from server
   flash serve                       start API server
 

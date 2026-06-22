@@ -1,4 +1,26 @@
-.git
+# Go CLI
+cli/flash
+
+# Android build outputs
+android/build/
+android/app/build/
+android/.gradle/
+android/.kotlin/
+android/gradle.properties
+android/local.properties
+*.apk
+
+# direnv
+.direnv/
+
+# ADB device
+.device
+
+# Personal data
 flash.cfg
 *.db
+*.db-*
+*.md
+!README.md
+flashcards.py
 flash
