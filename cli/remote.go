@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -18,8 +19,12 @@ type remoteStore struct {
 }
 
 func newRemoteStore(host, deck, token string, port int, step time.Duration) *remoteStore {
+	host = strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
+	if !strings.ContainsRune(host, ':') {
+		host = fmt.Sprintf("%s:%d", host, port)
+	}
 	return &remoteStore{
-		baseURL: fmt.Sprintf("https://%s:%d", host, port),
+		baseURL: "https://" + host,
 		deck:    deck,
 		token:   token,
 		step:    step,
