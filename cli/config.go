@@ -98,18 +98,20 @@ func loadConfig(deckPath string) appConfig {
 		RemotePort: 443,
 	}
 
-	// 2. Config file: -config flag, then next to deck, then cwd
+	// 2. Config files: global → explicit flag (each overrides previous)
 	candidates := []string{
-		clif.config,
-		filepath.Join(filepath.Dir(deckPath), "flash.cfg"),
 		filepath.Join(xdgConfigHome(), "flash", "flash.cfg"),
+		clif.config,
 	}
 	for _, path := range candidates {
 		if path == "" {
 			continue
 		}
 		var fc fileConfig
-		if _, err := toml.DecodeFile(path, &fc); err == nil {
+		if _, err := toml.DecodeFile(path, &fc); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: config %s: %v\n", path, err)
+			continue
+		} else {
 			if fc.DB != "" {
 				cfg.DB = fc.DB
 			}
@@ -152,9 +154,13 @@ func loadConfig(deckPath string) appConfig {
 				cfg.RemoteToken = fc.RemoteToken
 			}
 			if len(fc.Aliases) > 0 {
-				cfg.Aliases = fc.Aliases
+				if cfg.Aliases == nil {
+					cfg.Aliases = make(map[string]string)
+				}
+				for k, v := range fc.Aliases {
+					cfg.Aliases[k] = v
+				}
 			}
-			break
 		}
 	}
 
