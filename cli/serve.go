@@ -412,11 +412,15 @@ func computeActivity(reviews []ReviewEntry, days int) []DayActivity {
 		cardMap[r.CardID] = append(cardMap[r.CardID], r)
 	}
 
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+	now := time.Now().UTC()
+	start := time.Date(now.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
 	out := make([]DayActivity, days)
 	for i := range out {
-		d := today.AddDate(0, 0, -(days - 1 - i))
+		d := start.AddDate(0, 0, i)
 		out[i].Date = d.Format("2006-01-02")
+		if d.After(now) {
+			continue
+		}
 		dEnd := d.Add(24 * time.Hour)
 
 		done, missed := 0, 0
