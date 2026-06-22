@@ -79,6 +79,14 @@ func xdgDataHome() string {
 	return filepath.Join(home, ".local", "share")
 }
 
+func xdgConfigHome() string {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config")
+}
+
 func loadConfig(deckPath string) appConfig {
 	// 1. Defaults
 	cfg := appConfig{
@@ -94,7 +102,7 @@ func loadConfig(deckPath string) appConfig {
 	candidates := []string{
 		clif.config,
 		filepath.Join(filepath.Dir(deckPath), "flash.cfg"),
-		"flash.cfg",
+		filepath.Join(xdgConfigHome(), "flash", "flash.cfg"),
 	}
 	for _, path := range candidates {
 		if path == "" {
