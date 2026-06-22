@@ -71,7 +71,15 @@ func parseDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
-func loadConfig(deckPath, cliDB string) appConfig {
+func xdgDataHome() string {
+	if dir := os.Getenv("XDG_DATA_HOME"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share")
+}
+
+func loadConfig(deckPath string) appConfig {
 	// 1. Defaults
 	cfg := appConfig{
 		Model:      "qwen3:4b-instruct-2507-q4_K_M",
@@ -82,12 +90,16 @@ func loadConfig(deckPath, cliDB string) appConfig {
 		RemotePort: 443,
 	}
 
-	// 2. Config file (flash.cfg next to deck, then cwd)
+	// 2. Config file: -config flag, then next to deck, then cwd
 	candidates := []string{
+		clif.config,
 		filepath.Join(filepath.Dir(deckPath), "flash.cfg"),
 		"flash.cfg",
 	}
 	for _, path := range candidates {
+		if path == "" {
+			continue
+		}
 		var fc fileConfig
 		if _, err := toml.DecodeFile(path, &fc); err == nil {
 			if fc.DB != "" {
@@ -151,6 +163,16 @@ func loadConfig(deckPath, cliDB string) appConfig {
 	if v := os.Getenv("FLASH_OLLAMA_MODEL"); v != "" {
 		cfg.Model = v
 	}
+	if v := os.Getenv("FLASH_THRESHOLD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Threshold = f
+		}
+	}
+	if v := os.Getenv("FLASH_STEP"); v != "" {
+		if d, err := parseDuration(v); err == nil && d > 0 {
+			cfg.Step = d
+		}
+	}
 	if v := os.Getenv("FLASH_DB"); v != "" {
 		cfg.DB = v
 	}
@@ -173,23 +195,65 @@ func loadConfig(deckPath, cliDB string) appConfig {
 			cfg.RemotePort = n
 		}
 	}
-	if v := os.Getenv("FLASH_STEP"); v != "" {
-		if d, err := parseDuration(v); err == nil && d > 0 {
-			cfg.Step = d
-		}
-	}
 	if v := os.Getenv("FLASH_REMOTE_TOKEN"); v != "" {
 		cfg.RemoteToken = v
 	}
 
-	// 4. CLI args
-	if cliDB != "" {
-		cfg.DB = cliDB
+	// 4. Flags (highest priority)
+	if clif.ollamaURL != "" {
+		cfg.OllamaURL = clif.ollamaURL
+	}
+	if clif.ollamaUser != "" {
+		cfg.Username = clif.ollamaUser
+	}
+	if clif.ollamaPass != "" {
+		cfg.Password = clif.ollamaPass
+	}
+	if clif.model != "" {
+		cfg.Model = clif.model
+	}
+	if clif.threshold != "" {
+		if f, err := strconv.ParseFloat(clif.threshold, 64); err == nil {
+			cfg.Threshold = f
+		}
+	}
+	if clif.step != "" {
+		if d, err := parseDuration(clif.step); err == nil && d > 0 {
+			cfg.Step = d
+		}
+	}
+	if clif.db != "" {
+		cfg.DB = clif.db
+	}
+	if clif.serveHost != "" {
+		cfg.ServeHost = clif.serveHost
+	}
+	if clif.servePort != "" {
+		if n, err := strconv.Atoi(clif.servePort); err == nil {
+			cfg.ServePort = n
+		}
+	}
+	if clif.serveToken != "" {
+		cfg.ServeToken = clif.serveToken
+	}
+	if clif.serveData != "" {
+		cfg.ServeData = clif.serveData
+	}
+	if clif.remotePort != "" {
+		if n, err := strconv.Atoi(clif.remotePort); err == nil {
+			cfg.RemotePort = n
+		}
+	}
+	if clif.remoteToken != "" {
+		cfg.RemoteToken = clif.remoteToken
 	}
 
-	// Fallback: derive DB path from deck filename
+	// Fallback: XDG data dir (~/.local/share/flash/<deck>.db)
 	if cfg.DB == "" && deckPath != "" {
-		cfg.DB = strings.TrimSuffix(deckPath, filepath.Ext(deckPath)) + ".db"
+		deckName := strings.TrimSuffix(filepath.Base(deckPath), filepath.Ext(deckPath))
+		dataDir := filepath.Join(xdgDataHome(), "flash")
+		_ = os.MkdirAll(dataDir, 0o755)
+		cfg.DB = filepath.Join(dataDir, deckName+".db")
 	}
 
 	return cfg

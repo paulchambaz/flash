@@ -8,7 +8,7 @@ import (
 )
 
 func TestLoadConfigDefaults(t *testing.T) {
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if cfg.Model == "" {
 		t.Error("default Model should not be empty")
 	}
@@ -27,16 +27,10 @@ func TestLoadConfigDefaults(t *testing.T) {
 }
 
 func TestLoadConfigDBFallback(t *testing.T) {
-	cfg := loadConfig("/some/path/deck.md", "")
-	if cfg.DB != "/some/path/deck.db" {
-		t.Errorf("DB = %q, want %q", cfg.DB, "/some/path/deck.db")
-	}
-}
-
-func TestLoadConfigCLIDBOverride(t *testing.T) {
-	cfg := loadConfig("/some/deck.md", "/custom/path.db")
-	if cfg.DB != "/custom/path.db" {
-		t.Errorf("DB = %q, want /custom/path.db", cfg.DB)
+	cfg := loadConfig("/some/path/deck.md")
+	want := filepath.Join(xdgDataHome(), "flash", "deck.db")
+	if cfg.DB != want {
+		t.Errorf("DB = %q, want %q", cfg.DB, want)
 	}
 }
 
@@ -52,7 +46,7 @@ func TestLoadConfigEnvVars(t *testing.T) {
 	t.Setenv("FLASH_REMOTE_PORT", "8443")
 	t.Setenv("FLASH_REMOTE_TOKEN", "remtok")
 
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 
 	if cfg.OllamaURL != "http://custom-ollama:11434/api/chat" {
 		t.Errorf("OllamaURL = %q", cfg.OllamaURL)
@@ -87,13 +81,13 @@ func TestLoadConfigEnvVars(t *testing.T) {
 }
 
 func TestLoadConfigEnvInvalidValues(t *testing.T) {
-	defaults := loadConfig("", "")
+	defaults := loadConfig("")
 
 	t.Setenv("FLASH_SERVE_PORT", "not-a-number")
 	t.Setenv("FLASH_REMOTE_PORT", "not-a-number")
 	t.Setenv("FLASH_STEP", "not-a-duration")
 
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if cfg.ServePort != defaults.ServePort {
 		t.Errorf("invalid FLASH_SERVE_PORT should keep default %d, got %d", defaults.ServePort, cfg.ServePort)
 	}
@@ -124,7 +118,7 @@ remote_token = "toml-token"
 		t.Fatal(err)
 	}
 
-	cfg := loadConfig(deckPath, "")
+	cfg := loadConfig(deckPath)
 
 	if cfg.OllamaURL != "http://toml-ollama/api/chat" {
 		t.Errorf("OllamaURL = %q", cfg.OllamaURL)
@@ -157,16 +151,16 @@ func TestLoadConfigEnvOverridesToml(t *testing.T) {
 
 	t.Setenv("FLASH_OLLAMA_URL", "http://env/api/chat")
 
-	cfg := loadConfig(deckPath, "")
+	cfg := loadConfig(deckPath)
 	if cfg.OllamaURL != "http://env/api/chat" {
 		t.Errorf("env should override TOML: OllamaURL = %q", cfg.OllamaURL)
 	}
 }
 
-func TestLoadConfigCLIOverridesEnv(t *testing.T) {
+func TestLoadConfigEnvDBOverride(t *testing.T) {
 	t.Setenv("FLASH_DB", "/env/db.db")
-	cfg := loadConfig("deck.md", "/cli/db.db")
-	if cfg.DB != "/cli/db.db" {
-		t.Errorf("CLI should override env: DB = %q", cfg.DB)
+	cfg := loadConfig("deck.md")
+	if cfg.DB != "/env/db.db" {
+		t.Errorf("env FLASH_DB should override XDG fallback: DB = %q", cfg.DB)
 	}
 }

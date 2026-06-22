@@ -413,7 +413,12 @@ func computeActivity(reviews []ReviewEntry, days int) []DayActivity {
 	}
 
 	now := time.Now().UTC()
-	start := time.Date(now.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
+	jan1 := time.Date(now.Year(), time.January, 1, 0, 0, 0, 0, time.UTC)
+	weekday := int(jan1.Weekday()) // 0=Sun … 6=Sat
+	if weekday == 0 {
+		weekday = 7 // treat Sunday as 7 so Monday=1 is the anchor
+	}
+	start := jan1.AddDate(0, 0, 1-weekday) // back to Monday of that week
 	out := make([]DayActivity, days)
 	for i := range out {
 		d := start.AddDate(0, 0, i)

@@ -82,6 +82,16 @@ func (r *remoteStore) submitReview(cardID int64, correct bool, accuracy, keyword
 
 func (r *remoteStore) close() error { return nil }
 
+func (r *remoteStore) activity() ([]DayActivity, error) {
+	resp, err := r.do("GET", "/activity", nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var out []DayActivity
+	return out, json.NewDecoder(resp.Body).Decode(&out)
+}
+
 func (r *remoteStore) deleteDeck() error {
 	resp, err := r.do("DELETE", "/decks/"+r.deck, nil, "")
 	if err != nil {

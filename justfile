@@ -6,11 +6,13 @@ run-android: install-android
 run *ARGS:
   #!/usr/bin/env bash
   set -euo pipefail
+  config=""
+  [[ -f flash.cfg ]] && config="-config $(realpath flash.cfg)"
   args=()
   for arg in {{ ARGS }}; do
     [[ -e "$arg" ]] && args+=("$(realpath "$arg")") || args+=("$arg")
   done
-  cd cli && go run . "${args[@]}"
+  cd cli && go run . $config "${args[@]}"
 
 # Build a debug APK
 build-android:

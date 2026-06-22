@@ -9,24 +9,67 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// clif holds CLI flag overrides; applied last in loadConfig (highest priority).
+var clif struct {
+	config      string
+	db          string
+	ollamaURL   string
+	ollamaUser  string
+	ollamaPass  string
+	model       string
+	threshold   string
+	step        string
+	serveHost   string
+	servePort   string
+	serveToken  string
+	serveData   string
+	remotePort  string
+	remoteToken string
+}
+
 func main() {
-	// Manual arg parsing so flags work before or after positional args.
-	var reset bool
-	var cliDB string
+	// Manual arg parsing: flags accepted before or after positional args.
+	flagDests := map[string]*string{
+		"config":       &clif.config,
+		"db":           &clif.db,
+		"ollama-url":   &clif.ollamaURL,
+		"ollama-user":  &clif.ollamaUser,
+		"ollama-pass":  &clif.ollamaPass,
+		"model":        &clif.model,
+		"threshold":    &clif.threshold,
+		"step":         &clif.step,
+		"serve-host":   &clif.serveHost,
+		"serve-port":   &clif.servePort,
+		"serve-token":  &clif.serveToken,
+		"serve-data":   &clif.serveData,
+		"remote-port":  &clif.remotePort,
+		"remote-token": &clif.remoteToken,
+	}
 	var rest []string
 	args := os.Args[1:]
 	for i := 0; i < len(args); i++ {
-		switch {
-		case args[i] == "-reset" || args[i] == "--reset":
-			reset = true
-		case args[i] == "-db" || args[i] == "--db":
-			i++
-			if i < len(args) {
-				cliDB = args[i]
+		matched := false
+		for name, dest := range flagDests {
+			if args[i] == "-"+name || args[i] == "--"+name {
+				if i+1 < len(args) {
+					i++
+					*dest = args[i]
+				}
+				matched = true
+				break
 			}
-		case strings.HasPrefix(args[i], "-db=") || strings.HasPrefix(args[i], "--db="):
-			cliDB = strings.SplitN(args[i], "=", 2)[1]
-		default:
+			if v, ok := strings.CutPrefix(args[i], "-"+name+"="); ok {
+				*dest = v
+				matched = true
+				break
+			}
+			if v, ok := strings.CutPrefix(args[i], "--"+name+"="); ok {
+				*dest = v
+				matched = true
+				break
+			}
+		}
+		if !matched {
 			rest = append(rest, args[i])
 		}
 	}
@@ -78,12 +121,18 @@ func main() {
 			os.Exit(1)
 		}
 		runStatsCmd(rest[1])
+	case "reset":
+		if len(rest) != 2 {
+			fmt.Fprintln(os.Stderr, "usage: flash reset <deck.md>|<host:deck.md>")
+			os.Exit(1)
+		}
+		runResetCmd(rest[1])
 	default:
 		if len(rest) != 1 {
 			printUsage()
 			os.Exit(1)
 		}
-		runStudyCmd(rest[0], reset, cliDB)
+		runStudyCmd(rest[0])
 	}
 }
 
@@ -93,7 +142,9 @@ func parseTarget(arg string) (host, deckName string, isRemote bool) {
 	if idx := strings.Index(arg, ":"); idx > 0 {
 		host = arg[:idx]
 		filename := arg[idx+1:]
-		deckName = strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+		if filename != "" {
+			deckName = strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+		}
 		isRemote = true
 		return
 	}
@@ -107,7 +158,7 @@ func runShowCmd(target string) {
 		fmt.Fprintln(os.Stderr, "error: show requires <host:deck.md> syntax")
 		os.Exit(1)
 	}
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
@@ -133,7 +184,7 @@ func runRmCmd(target string) {
 		fmt.Fprintln(os.Stderr, "error: rm requires <host:deck.md> syntax")
 		os.Exit(1)
 	}
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
@@ -146,7 +197,7 @@ func runRmCmd(target string) {
 }
 
 func runListCmd(host string) {
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
@@ -172,7 +223,7 @@ func runListCmd(host string) {
 }
 
 func runServeCmd() {
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if err := runServe(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "error: serve: %v\n", err)
 		os.Exit(1)
@@ -201,7 +252,7 @@ func runPushCmd(src, dest string) {
 		os.Exit(1)
 	}
 
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
@@ -213,17 +264,46 @@ func runPushCmd(src, dest string) {
 	fmt.Printf("Pushed %s to %s:%s.\n", src, host, deckName)
 }
 
-func runStudyCmd(arg string, reset bool, cliDB string) {
+func runResetCmd(arg string) {
 	host, deckName, isRemote := parseTarget(arg)
-
 	if isRemote {
-		runRemoteStudy(host, deckName, reset)
+		cfg := loadConfig("")
+		if resolved, ok := cfg.Aliases[host]; ok {
+			host = resolved
+		}
+		rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+		if err := rs.resetDeck(); err != nil {
+			fmt.Fprintf(os.Stderr, "error: reset: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Reset %s on %s.\n", deckName, host)
 	} else {
-		runLocalStudy(arg, deckName, reset, cliDB)
+		cfg := loadConfig(arg)
+		db, err := openDB(cfg.DB, cfg.Step)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		defer db.close()
+		if err := db.resetDeck(deckName); err != nil {
+			fmt.Fprintf(os.Stderr, "error: reset: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("Reset %s.\n", deckName)
 	}
 }
 
-func runLocalStudy(deckPath, deckName string, reset bool, cliDB string) {
+func runStudyCmd(arg string) {
+	host, deckName, isRemote := parseTarget(arg)
+
+	if isRemote {
+		runRemoteStudy(host, deckName)
+	} else {
+		runLocalStudy(arg, deckName)
+	}
+}
+
+func runLocalStudy(deckPath, deckName string) {
 	cards, err := parseDeck(deckPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -234,7 +314,7 @@ func runLocalStudy(deckPath, deckName string, reset bool, cliDB string) {
 		os.Exit(1)
 	}
 
-	cfg := loadConfig(deckPath, cliDB)
+	cfg := loadConfig(deckPath)
 
 	database, err := openDB(cfg.DB, cfg.Step)
 	if err != nil {
@@ -242,15 +322,6 @@ func runLocalStudy(deckPath, deckName string, reset bool, cliDB string) {
 		os.Exit(1)
 	}
 	defer database.close()
-
-	if reset {
-		if err := database.resetDeck(deckName); err != nil {
-			fmt.Fprintf(os.Stderr, "error: reset: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Reset %s.\n", deckName)
-		return
-	}
 
 	if err := database.syncCards(deckName, cards); err != nil {
 		fmt.Fprintf(os.Stderr, "error: sync cards: %v\n", err)
@@ -278,8 +349,8 @@ func runLocalStudy(deckPath, deckName string, reset bool, cliDB string) {
 	runTUI(m)
 }
 
-func runRemoteStudy(host, deckName string, reset bool) {
-	cfg := loadConfig("", "")
+func runRemoteStudy(host, deckName string) {
+	cfg := loadConfig("")
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
@@ -289,15 +360,6 @@ func runRemoteStudy(host, deckName string, reset bool) {
 	}
 
 	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
-
-	if reset {
-		if err := rs.resetDeck(); err != nil {
-			fmt.Fprintf(os.Stderr, "error: reset: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("Reset %s on %s.\n", deckName, host)
-		return
-	}
 
 	due, err := rs.dueCards(deckName)
 	if err != nil {
@@ -349,7 +411,7 @@ func runPullCmd(src, dest string) {
 		localFile = dest
 	}
 
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
@@ -377,7 +439,7 @@ func runStatsCmd(arg string) {
 }
 
 func runLocalStats(deckPath, deckName string) {
-	cfg := loadConfig(deckPath, "")
+	cfg := loadConfig(deckPath)
 	db, err := openDB(cfg.DB, cfg.Step)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -388,17 +450,35 @@ func runLocalStats(deckPath, deckName string) {
 }
 
 func runRemoteStats(host, deckName string) {
-	cfg := loadConfig("", "")
+	cfg := loadConfig("")
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
 	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+	if deckName == "" {
+		activity, err := rs.activity()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: activity: %v\n", err)
+			os.Exit(1)
+		}
+		printActivity(activity)
+		return
+	}
 	stats, err := rs.deckStats()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: stats: %v\n", err)
 		os.Exit(1)
 	}
 	printDeckStats(deckName, stats)
+}
+
+func printActivity(days []DayActivity) {
+	for _, d := range days {
+		if d.Due == 0 && d.Done == 0 {
+			continue
+		}
+		fmt.Printf("%s  %d/%d\n", d.Date, d.Done, d.Due)
+	}
 }
 
 func printStats(deckName string, db *DB) {
@@ -434,21 +514,31 @@ func printDeckStats(deckName string, s DeckStats) {
 
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage:
-  flash [flags] <deck.md>           study local deck
-  flash [flags] <host:deck.md>      study remote deck
-  flash stats <deck.md>             show local deck statistics
-  flash stats <host:deck.md>        show remote deck statistics
-  flash list <host>                 list decks on server (with due/total)
-  flash show <host:deck.md>         show deck summary
-  flash push <deck.md> <server:>    push local deck to server (same name)
-  flash push <deck.md> <server:x>   push local deck to server as x
-  flash pull <server:deck.md> <.>   pull deck from server to current dir
-  flash pull <server:deck.md> <f>   pull deck from server to local file f
-  flash rm <host:deck.md>           delete deck from server
-  flash serve                       start API server
+  flash <deck|host:deck>              study a deck
+  flash reset <deck|host:deck>        reset all card states
+  flash stats <deck|host:deck>        show deck statistics
+  flash stats <host:>                 show yearly activity (done/due per day)
+  flash list <host>                   list decks on server
+  flash show <host:deck>              show deck info
+  flash push <src> <host:[dst]>       push deck to server
+  flash pull <host:src> <dst|.>       pull deck from server
+  flash rm <host:deck>                delete deck from server
+  flash serve                         start API server
 
 Flags:
-  -db string    SQLite database path (default: <deck>.db)
-  -reset        reset all card states for this deck
+  -ollama-url <url>     Ollama API endpoint
+  -ollama-user <str>    HTTP basic auth username
+  -ollama-pass <str>    HTTP basic auth password
+  -model <name>         model name (default: qwen3:4b-...)
+  -threshold <0-1>      keyword match threshold (default: 0.7)
+  -step <duration>      minimum review interval (default: 24h)
+  -db <path>            SQLite path (default: ~/.local/share/flash/<deck>.db)
+  -serve-host <addr>    bind address (default: 0.0.0.0)
+  -serve-port <int>     listen port (default: 8765)
+  -serve-token <str>    API auth token
+  -serve-data <dir>     data directory (default: .)
+  -remote-port <int>    remote port (default: 443)
+  -remote-token <str>   remote auth token
+  -config <path>        config file (default: flash.cfg)
 `)
 }
