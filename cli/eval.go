@@ -150,11 +150,10 @@ func levenshteinSim(a, b []rune) float64 {
 	return 1.0 - float64(prev[lb])/float64(maxLen)
 }
 
-var llmSystemPrompt = "Tu évalues le SENS de la réponse d'un étudiant à une flashcard, " +
-	"comparée à une réponse de référence. Réponds par 'accuracy', un " +
-	"score entre 0 et 1 : 1 = sens complet et exact, 0.5 = partiel ou " +
-	"imprécis, 0 = faux ou hors-sujet. Tolère les fautes d'orthographe, " +
-	"ignore le style et la longueur."
+var llmSystemPrompt = "You evaluate the MEANING of a student's answer to a flashcard, " +
+	"compared to a reference answer. Respond with 'accuracy', a score " +
+	"between 0 and 1: 1 = fully correct, 0.5 = partial or imprecise, " +
+	"0 = wrong or off-topic. Tolerate spelling mistakes, ignore style and length."
 
 var llmJSONSchema = map[string]any{
 	"type": "object",
@@ -170,7 +169,7 @@ func (e *evaluator) llmAccuracy(concept, referencePlain, userAnswer string) (flo
 		"messages": []map[string]string{
 			{"role": "system", "content": llmSystemPrompt},
 			{"role": "user", "content": fmt.Sprintf(
-				"Concept: %s\nRéférence: %s\nRéponse étudiant: %s",
+				"Concept: %s\nReference: %s\nStudent answer: %s",
 				concept, referencePlain, userAnswer,
 			)},
 		},

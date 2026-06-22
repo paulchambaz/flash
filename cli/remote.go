@@ -10,20 +10,20 @@ import (
 )
 
 type remoteStore struct {
-	baseURL    string
-	deck       string
-	token      string
-	timeFactor float64
-	client     *http.Client
+	baseURL string
+	deck    string
+	token   string
+	step    time.Duration
+	client  *http.Client
 }
 
-func newRemoteStore(host, deck, token string, port int, timeFactor float64) *remoteStore {
+func newRemoteStore(host, deck, token string, port int, step time.Duration) *remoteStore {
 	return &remoteStore{
-		baseURL:    fmt.Sprintf("https://%s:%d", host, port),
-		deck:       deck,
-		token:      token,
-		timeFactor: timeFactor,
-		client:     &http.Client{Timeout: 15 * time.Second},
+		baseURL: fmt.Sprintf("https://%s:%d", host, port),
+		deck:    deck,
+		token:   token,
+		step:    step,
+		client:  &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -55,7 +55,7 @@ func (r *remoteStore) submitReview(cardID int64, correct bool, accuracy, keyword
 		Correct:       correct,
 		Accuracy:      accuracy,
 		KeywordsScore: keywordsScore,
-		TimeFactor:    r.timeFactor,
+		StepSeconds:   r.step.Seconds(),
 	})
 	if err != nil {
 		return schedResult{}, err

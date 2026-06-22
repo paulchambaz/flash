@@ -1,3 +1,7 @@
+# Install and launch on connected device
+run-android: install-android
+  adb -s $(adb-device) shell am start -n xyz.chambaz.flash/.MainActivity
+
 # Run the CLI
 run *ARGS:
   #!/usr/bin/env bash
@@ -15,10 +19,6 @@ build-android:
 # Install debug APK on connected device
 install-android:
   cd android && ./gradlew installDebug ${AAPT2:+-Pandroid.aapt2FromMavenOverride=$AAPT2}
-
-# Install and launch on connected device
-run-android: install-android
-  adb -s $(adb-device) shell am start -n xyz.chambaz.flash/.MainActivity
 
 # Build a release APK
 release-android:

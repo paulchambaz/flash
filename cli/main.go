@@ -111,7 +111,7 @@ func runShowCmd(target string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
 	info, err := rs.showDeck()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: show: %v\n", err)
@@ -137,7 +137,7 @@ func runRmCmd(target string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
 	if err := rs.deleteDeck(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: rm: %v\n", err)
 		os.Exit(1)
@@ -150,7 +150,7 @@ func runListCmd(host string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, "", cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	rs := newRemoteStore(host, "", cfg.RemoteToken, cfg.RemotePort, cfg.Step)
 	items, err := rs.listDecks()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: list: %v\n", err)
@@ -205,7 +205,7 @@ func runPushCmd(src, dest string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
 	if err := rs.pushDeck(content); err != nil {
 		fmt.Fprintf(os.Stderr, "error: push: %v\n", err)
 		os.Exit(1)
@@ -236,7 +236,7 @@ func runLocalStudy(deckPath, deckName string, reset bool, cliDB string) {
 
 	cfg := loadConfig(deckPath, cliDB)
 
-	database, err := openDB(cfg.DB, cfg.TimeFactor)
+	database, err := openDB(cfg.DB, cfg.Step)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -263,7 +263,7 @@ func runLocalStudy(deckPath, deckName string, reset bool, cliDB string) {
 		os.Exit(1)
 	}
 	if len(due) == 0 {
-		fmt.Println("Aucune carte à réviser aujourd'hui.")
+		fmt.Println("No cards due today.")
 		return
 	}
 
@@ -288,7 +288,7 @@ func runRemoteStudy(host, deckName string, reset bool) {
 		os.Exit(1)
 	}
 
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
 
 	if reset {
 		if err := rs.resetDeck(); err != nil {
@@ -305,7 +305,7 @@ func runRemoteStudy(host, deckName string, reset bool) {
 		os.Exit(1)
 	}
 	if len(due) == 0 {
-		fmt.Println("Aucune carte à réviser aujourd'hui.")
+		fmt.Println("No cards due today.")
 		return
 	}
 
@@ -353,7 +353,7 @@ func runPullCmd(src, dest string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
 	content, err := rs.pullDeck()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: pull: %v\n", err)
@@ -378,7 +378,7 @@ func runStatsCmd(arg string) {
 
 func runLocalStats(deckPath, deckName string) {
 	cfg := loadConfig(deckPath, "")
-	db, err := openDB(cfg.DB, cfg.TimeFactor)
+	db, err := openDB(cfg.DB, cfg.Step)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -392,7 +392,7 @@ func runRemoteStats(host, deckName string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.TimeFactor)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
 	stats, err := rs.deckStats()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: stats: %v\n", err)
@@ -416,12 +416,12 @@ func printDeckStats(deckName string, s DeckStats) {
 	fmt.Printf("new:           %d\n", s.New)
 	fmt.Printf("due today:     %d\n", s.Due)
 	if s.ReviewCount > 0 {
-		fmt.Printf("success rate:  %.0f%%  (%d dernières révisions)\n", s.SuccessRate*100, s.ReviewCount)
+		fmt.Printf("success rate:  %.0f%%  (%d last reviews)\n", s.SuccessRate*100, s.ReviewCount)
 	} else {
 		fmt.Printf("success rate:  —\n")
 	}
 	if s.AvgStability > 0 {
-		fmt.Printf("avg stability: %.1f jours\n", s.AvgStability)
+		fmt.Printf("avg stability: %.1f days\n", s.AvgStability)
 	} else {
 		fmt.Printf("avg stability: —\n")
 	}

@@ -14,8 +14,8 @@ import (
 
 var ansiEscRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
-var frMonths = [...]string{"", "janvier", "février", "mars", "avril", "mai", "juin",
-	"juillet", "août", "septembre", "octobre", "novembre", "décembre"}
+var enMonths = [...]string{"", "January", "February", "March", "April", "May", "June",
+	"July", "August", "September", "October", "November", "December"}
 
 type uiState int
 
@@ -50,7 +50,7 @@ type model struct {
 
 func newModel(deckName string, cards []CardState, deckTotal int, ev *evaluator, st store) model {
 	ta := textarea.New()
-	ta.Placeholder = "Votre réponse..."
+	ta.Placeholder = "Your answer..."
 	ta.Focus()
 	ta.SetWidth(60)
 	ta.SetHeight(4)
@@ -219,11 +219,11 @@ func (m model) viewQuestion(b *strings.Builder) string {
 	b.WriteString("\n")
 	b.WriteString(divider(m.width))
 	b.WriteString("\n\n")
-	b.WriteString(styleLabel.Render("Votre réponse :"))
+	b.WriteString(styleLabel.Render("Your answer:"))
 	b.WriteString("\n")
 	b.WriteString(m.textarea.View())
 	b.WriteString("\n\n")
-	b.WriteString(styleMuted.Render("entrée soumettre  •  ctrl+c quitter"))
+	b.WriteString(styleMuted.Render("enter to submit  •  ctrl+c to quit"))
 	return b.String()
 }
 
@@ -234,7 +234,7 @@ func (m model) viewEvaluating(b *strings.Builder) string {
 	b.WriteString(divider(m.width))
 	b.WriteString("\n\n")
 	b.WriteString(m.spinner.View())
-	b.WriteString(styleAccent.Render(" Évaluation en cours..."))
+	b.WriteString(styleAccent.Render(" Evaluating..."))
 	b.WriteString("\n")
 	return b.String()
 }
@@ -245,7 +245,7 @@ func (m model) viewResult(b *strings.Builder) string {
 	b.WriteString("\n")
 	b.WriteString(divider(m.width))
 	b.WriteString("\n\n")
-	b.WriteString(styleLabel.Render("Référence :"))
+	b.WriteString(styleLabel.Render("Reference:"))
 	b.WriteString("\n")
 	ref := card.Reference
 	if m.result != nil {
@@ -259,9 +259,9 @@ func (m model) viewResult(b *strings.Builder) string {
 	b.WriteString("\n\n")
 
 	if m.err != nil {
-		b.WriteString(styleError.Render("Erreur : " + m.err.Error()))
+		b.WriteString(styleError.Render("Error: " + m.err.Error()))
 		b.WriteString("\n\n")
-		b.WriteString(styleMuted.Render("entrée pour continuer"))
+		b.WriteString(styleMuted.Render("enter to continue"))
 		return b.String()
 	}
 	if m.result == nil {
@@ -275,25 +275,25 @@ func (m model) viewResult(b *strings.Builder) string {
 	}
 	if m.sched != nil {
 		if m.sched.reshowInSession {
-			b.WriteString(styleMuted.Render("  •  à revoir dans cette session"))
+			b.WriteString(styleMuted.Render("  •  review again this session"))
 		} else {
-			b.WriteString(styleMuted.Render("  •  prochaine révision " + formatDate(m.sched.nextDue)))
+			b.WriteString(styleMuted.Render("  •  next review " + formatDate(m.sched.nextDue)))
 		}
 	}
 	b.WriteString("\n\n")
 	b.WriteString(divider(m.width))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("entrée pour continuer"))
+	b.WriteString(styleMuted.Render("enter to continue"))
 	return b.String()
 }
 
 func (m model) viewDone(b *strings.Builder) string {
 	b.WriteString("\n")
-	b.WriteString(styleSuccess.Render("Session terminée !"))
+	b.WriteString(styleSuccess.Render("Session complete!"))
 	b.WriteString("\n\n")
-	b.WriteString(fmt.Sprintf("%s cartes révisées\n", styleAccent.Render(fmt.Sprintf("%d", len(m.cards)))))
+	b.WriteString(fmt.Sprintf("%s cards reviewed\n", styleAccent.Render(fmt.Sprintf("%d", len(m.cards)))))
 	b.WriteString("\n")
-	b.WriteString(styleMuted.Render("q pour quitter"))
+	b.WriteString(styleMuted.Render("q to quit"))
 	return b.String()
 }
 
@@ -360,12 +360,12 @@ func formatDate(t time.Time) string {
 	t = t.Local()
 	switch {
 	case t.Year() == now.Year() && t.YearDay() == now.YearDay():
-		return "aujourd'hui"
+		return "today"
 	case t.Year() == now.Year() && t.YearDay() == now.YearDay()+1:
-		return "demain"
+		return "tomorrow"
 	case t.Year() == now.Year():
-		return fmt.Sprintf("le %d %s", t.Day(), frMonths[t.Month()])
+		return fmt.Sprintf("%s %d", enMonths[t.Month()], t.Day())
 	default:
-		return fmt.Sprintf("le %d %s %d", t.Day(), frMonths[t.Month()], t.Year())
+		return fmt.Sprintf("%s %d, %d", enMonths[t.Month()], t.Day(), t.Year())
 	}
 }

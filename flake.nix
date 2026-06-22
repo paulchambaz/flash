@@ -85,6 +85,8 @@
             ktfmt
             lemminx
 
+            sqlite
+
             just
             gnumake
             git

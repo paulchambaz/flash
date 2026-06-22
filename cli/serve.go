@@ -26,7 +26,7 @@ type reviewRequest struct {
 	Correct       bool    `json:"correct"`
 	Accuracy      float64 `json:"accuracy"`
 	KeywordsScore float64 `json:"keywords_score"`
-	TimeFactor    float64 `json:"time_factor"`
+	StepSeconds   float64 `json:"step_seconds"`
 }
 
 type reviewResponse struct {
@@ -68,6 +68,7 @@ func runServe(cfg appConfig) error {
 	mux.HandleFunc("POST /decks/{deck}/cards/review", s.auth(s.handleReview))
 	mux.HandleFunc("POST /decks/{deck}/cards/evaluate", s.auth(s.handleEvaluate))
 	mux.HandleFunc("POST /decks/{deck}/reset", s.auth(s.handleReset))
+	mux.HandleFunc("GET /activity", s.auth(s.handleActivity))
 
 	addr := fmt.Sprintf("%s:%d", cfg.ServeHost, cfg.ServePort)
 	log.Printf("flash serve on %s  data=%s", addr, dataDir)
@@ -183,11 +184,11 @@ func (s *flashServer) handleReview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	tf := req.TimeFactor
-	if tf <= 0 {
-		tf = 1.0
+	step := db.step
+	if req.StepSeconds > 0 {
+		step = time.Duration(req.StepSeconds * float64(time.Second))
 	}
-	sr, err := db.submitReviewWithFactor(req.CardID, req.Correct, req.Accuracy, req.KeywordsScore, tf)
+	sr, err := db.submitReviewWithStep(req.CardID, req.Correct, req.Accuracy, req.KeywordsScore, step)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -335,8 +336,10 @@ func (s *flashServer) handlePullDeck(w http.ResponseWriter, r *http.Request) {
 }
 
 type evaluateRequest struct {
-	CardID int64  `json:"card_id"`
-	Answer string `json:"answer"`
+	CardID      int64   `json:"card_id"`
+	Answer      string  `json:"answer"`
+	StepSeconds float64 `json:"step_seconds"`
+	Threshold   float64 `json:"threshold"`
 }
 
 type evaluateResponse struct {
@@ -367,14 +370,22 @@ func (s *flashServer) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ev := newEvaluator(s.evalCfg)
+	cfg := s.evalCfg
+	if req.Threshold > 0 {
+		cfg.threshold = req.Threshold
+	}
+	ev := newEvaluator(cfg)
 	result, err := ev.evaluate(card.Concept, card.Reference, req.Answer)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "eval: " + err.Error()})
 		return
 	}
 
-	sr, err := db.submitReview(card.ID, result.correct, result.accuracy, result.keywordsScore)
+	step := db.step
+	if req.StepSeconds > 0 {
+		step = time.Duration(req.StepSeconds * float64(time.Second))
+	}
+	sr, err := db.submitReviewWithStep(card.ID, result.correct, result.accuracy, result.keywordsScore, step)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "submit review: " + err.Error()})
 		return
@@ -387,6 +398,84 @@ func (s *flashServer) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		ReshowInSession: sr.reshowInSession,
 		NextDue:         sr.nextDue,
 	})
+}
+
+type DayActivity struct {
+	Date string `json:"date"`
+	Done int    `json:"done"`
+	Due  int    `json:"due"`
+}
+
+func computeActivity(reviews []ReviewEntry, days int) []DayActivity {
+	cardMap := make(map[int64][]ReviewEntry)
+	for _, r := range reviews {
+		cardMap[r.CardID] = append(cardMap[r.CardID], r)
+	}
+
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	out := make([]DayActivity, days)
+	for i := range out {
+		d := today.AddDate(0, 0, -(days - 1 - i))
+		out[i].Date = d.Format("2006-01-02")
+		dEnd := d.Add(24 * time.Hour)
+
+		done, missed := 0, 0
+		for _, rr := range cardMap {
+			reviewedOnD := false
+			for _, r := range rr {
+				rt := r.ReviewedAt.UTC()
+				if !rt.Before(d) && rt.Before(dEnd) {
+					reviewedOnD = true
+					break
+				}
+			}
+			if reviewedOnD {
+				done++
+				continue
+			}
+			var lastBefore *ReviewEntry
+			for j := range rr {
+				if rr[j].ReviewedAt.UTC().Before(d) {
+					lastBefore = &rr[j]
+				}
+			}
+			if lastBefore != nil {
+				dueAt := lastBefore.ReviewedAt.UTC().Add(
+					time.Duration(float64(24*time.Hour) * lastBefore.IntervalDays))
+				if !dueAt.After(dEnd) {
+					missed++
+				}
+			}
+		}
+		out[i].Done = done
+		out[i].Due = done + missed
+	}
+	return out
+}
+
+func (s *flashServer) handleActivity(w http.ResponseWriter, r *http.Request) {
+	entries, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	var all []ReviewEntry
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".db") {
+			continue
+		}
+		deck := strings.TrimSuffix(e.Name(), ".db")
+		db, err := s.getDB(deck)
+		if err != nil {
+			continue
+		}
+		rr, err := db.allReviews()
+		if err != nil {
+			continue
+		}
+		all = append(all, rr...)
+	}
+	writeJSON(w, http.StatusOK, computeActivity(all, 378))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

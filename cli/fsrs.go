@@ -44,7 +44,8 @@ type schedResult struct {
 	reshowInSession bool // true = card comes back in the current session
 }
 
-func schedule(state CardState, correct bool, accuracy, timeFactor float64, now time.Time) schedResult {
+func schedule(state CardState, correct bool, accuracy float64, step time.Duration, now time.Time) schedResult {
+	stepDays := step.Hours() / 24.0
 	ep := defaultExtParams
 	var sNew, dNew float64
 
@@ -76,26 +77,38 @@ func schedule(state CardState, correct bool, accuracy, timeFactor float64, now t
 		dNew = math.Max(1, math.Min(10, dNew))
 	}
 
-	// Early failures (reps < 3): show again in the current session.
-	if !correct && state.Reps < 3 {
+	if !correct {
+		if state.Reps < 2 {
+			// Learning failure: T/10, floor 1 min.
+			again := step / 10
+			if again < time.Minute {
+				again = time.Minute
+			}
+			return schedResult{
+				stability:       sNew,
+				difficulty:      dNew,
+				intervalDays:    again.Hours() / 24.0,
+				nextDue:         now.Add(again),
+				reshowInSession: again <= 5*time.Minute,
+			}
+		}
+		// Review failure: re-learn in T.
 		return schedResult{
 			stability:       sNew,
 			difficulty:      dNew,
-			intervalDays:    0,
-			nextDue:         now,
-			reshowInSession: true,
+			intervalDays:    stepDays,
+			nextDue:         now.Add(step),
+			reshowInSession: step <= 5*time.Minute,
 		}
 	}
 
-	// First 2 successes use fixed intervals before FSRS takes over.
 	var intervalDays float64
-	switch state.Reps {
-	case 0:
-		intervalDays = 1
-	case 1:
-		intervalDays = 3
-	default:
-		intervalDays = math.Max(1, sNew*timeFactor)
+	if state.Reps == 0 {
+		// First correct: T.
+		intervalDays = stepDays
+	} else {
+		// Graduated: FSRS stability × T, minimum T.
+		intervalDays = math.Max(stepDays, sNew*stepDays)
 	}
 
 	return schedResult{

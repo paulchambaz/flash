@@ -11,8 +11,8 @@ import (
 )
 
 type DB struct {
-	conn       *sql.DB
-	timeFactor float64
+	conn *sql.DB
+	step time.Duration
 }
 
 type CardState struct {
@@ -39,7 +39,7 @@ type Review struct {
 	IntervalDays    float64
 }
 
-func openDB(path string, timeFactor float64) (*DB, error) {
+func openDB(path string, step time.Duration) (*DB, error) {
 	conn, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -47,7 +47,7 @@ func openDB(path string, timeFactor float64) (*DB, error) {
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, fmt.Errorf("wal mode: %w", err)
 	}
-	db := &DB{conn: conn, timeFactor: timeFactor}
+	db := &DB{conn: conn, step: step}
 	return db, db.migrate()
 }
 
@@ -145,8 +145,15 @@ func (db *DB) syncCards(deck string, cards []Card) error {
 				return err
 			}
 		} else if e.hash != h {
-			if _, err := db.conn.Exec(
-				`UPDATE cards SET reference = ?, ref_hash = ? WHERE deck = ? AND concept = ?`,
+			if _, err := db.conn.Exec(`DELETE FROM reviews WHERE card_id = ?`, e.id); err != nil {
+				return err
+			}
+			if _, err := db.conn.Exec(`
+				UPDATE cards
+				SET reference = ?, ref_hash = ?,
+				    reps = 0, lapses = 0, stability = 0, difficulty = 5,
+				    last_review = NULL, due_date = NULL
+				WHERE deck = ? AND concept = ?`,
 				c.Reference, h, deck, c.Concept,
 			); err != nil {
 				return err
@@ -161,7 +168,7 @@ func (db *DB) dueCards(deck string) ([]CardState, error) {
 		SELECT id, deck, concept, reference, stability, difficulty, reps, lapses, last_review, due_date
 		FROM cards
 		WHERE deck = ? AND (due_date IS NULL OR due_date <= ?)
-		ORDER BY CASE WHEN due_date IS NULL THEN 0 ELSE 1 END, due_date ASC
+		ORDER BY CASE WHEN due_date IS NULL THEN 1 ELSE 0 END, due_date ASC
 	`, deck, time.Now().UTC())
 	if err != nil {
 		return nil, err
@@ -233,7 +240,14 @@ func scanNullTime(s sql.NullString) (*time.Time, error) {
 	if !s.Valid {
 		return nil, nil
 	}
-	for _, f := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
+	for _, f := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999 -0700 MST",
+		"2006-01-02 15:04:05 -0700 MST",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+	} {
 		if t, err := time.Parse(f, s.String); err == nil {
 			return &t, nil
 		}
@@ -277,10 +291,10 @@ func (db *DB) getCard(id int64) (CardState, error) {
 }
 
 func (db *DB) submitReview(cardID int64, correct bool, accuracy, keywordsScore float64) (schedResult, error) {
-	return db.submitReviewWithFactor(cardID, correct, accuracy, keywordsScore, db.timeFactor)
+	return db.submitReviewWithStep(cardID, correct, accuracy, keywordsScore, db.step)
 }
 
-func (db *DB) submitReviewWithFactor(cardID int64, correct bool, accuracy, keywordsScore, timeFactor float64) (schedResult, error) {
+func (db *DB) submitReviewWithStep(cardID int64, correct bool, accuracy, keywordsScore float64, step time.Duration) (schedResult, error) {
 	card, err := db.getCard(cardID)
 	if err != nil {
 		return schedResult{}, fmt.Errorf("get card: %w", err)
@@ -288,7 +302,7 @@ func (db *DB) submitReviewWithFactor(cardID int64, correct bool, accuracy, keywo
 
 	stabilityBefore := card.Stability
 	now := time.Now()
-	sr := schedule(card, correct, accuracy, timeFactor, now)
+	sr := schedule(card, correct, accuracy, step, now)
 
 	nowUTC := now.UTC()
 	nextDue := sr.nextDue.UTC()
@@ -394,4 +408,34 @@ func (db *DB) addReview(r Review) error {
 	`, r.CardID, r.ReviewedAt, r.KeywordsScore, r.Accuracy, r.Correct,
 		r.StabilityBefore, r.StabilityAfter, r.IntervalDays)
 	return err
+}
+
+type ReviewEntry struct {
+	CardID       int64
+	ReviewedAt   time.Time
+	IntervalDays float64
+}
+
+func (db *DB) allReviews() ([]ReviewEntry, error) {
+	rows, err := db.conn.Query(
+		`SELECT card_id, reviewed_at, interval_days FROM reviews ORDER BY card_id, reviewed_at`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReviewEntry
+	for rows.Next() {
+		var e ReviewEntry
+		var ts sql.NullString
+		if err := rows.Scan(&e.CardID, &ts, &e.IntervalDays); err != nil {
+			return nil, err
+		}
+		t, err := scanNullTime(ts)
+		if err != nil || t == nil {
+			continue
+		}
+		e.ReviewedAt = *t
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
