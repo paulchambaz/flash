@@ -101,8 +101,11 @@ func TestLoadConfigEnvInvalidValues(t *testing.T) {
 
 func TestLoadConfigTOMLFile(t *testing.T) {
 	dir := t.TempDir()
-	deckPath := filepath.Join(dir, "deck.md")
-	cfgPath := filepath.Join(dir, "flash.cfg")
+	cfgDir := filepath.Join(dir, "flash")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", dir)
 
 	tomlContent := `
 ollama_url = "http://toml-ollama/api/chat"
@@ -111,14 +114,11 @@ step = "12h"
 serve_port = 7777
 remote_token = "toml-token"
 `
-	if err := os.WriteFile(cfgPath, []byte(tomlContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(deckPath, []byte(""), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, "flash.cfg"), []byte(tomlContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	cfg := loadConfig(deckPath)
+	cfg := loadConfig("")
 
 	if cfg.OllamaURL != "http://toml-ollama/api/chat" {
 		t.Errorf("OllamaURL = %q", cfg.OllamaURL)
@@ -139,19 +139,19 @@ remote_token = "toml-token"
 
 func TestLoadConfigEnvOverridesToml(t *testing.T) {
 	dir := t.TempDir()
-	deckPath := filepath.Join(dir, "deck.md")
-	cfgPath := filepath.Join(dir, "flash.cfg")
-
-	if err := os.WriteFile(cfgPath, []byte(`ollama_url = "http://toml/api/chat"`), 0o644); err != nil {
+	cfgDir := filepath.Join(dir, "flash")
+	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(deckPath, []byte(""), 0o644); err != nil {
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	if err := os.WriteFile(filepath.Join(cfgDir, "flash.cfg"), []byte(`ollama_url = "http://toml/api/chat"`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	t.Setenv("FLASH_OLLAMA_URL", "http://env/api/chat")
 
-	cfg := loadConfig(deckPath)
+	cfg := loadConfig("")
 	if cfg.OllamaURL != "http://env/api/chat" {
 		t.Errorf("env should override TOML: OllamaURL = %q", cfg.OllamaURL)
 	}

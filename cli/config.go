@@ -107,6 +107,9 @@ func loadConfig(deckPath string) appConfig {
 		if path == "" {
 			continue
 		}
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
 		var fc fileConfig
 		if _, err := toml.DecodeFile(path, &fc); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: config %s: %v\n", path, err)
