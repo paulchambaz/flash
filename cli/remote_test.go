@@ -85,7 +85,7 @@ func TestRemoteStoreSubmitReview(t *testing.T) {
 		json.NewDecoder(r.Body).Decode(&gotBody)
 		json.NewEncoder(w).Encode(reviewResponse{
 			Stability:    3.5,
-			Difficulty:   5.0,
+			Difficulty:   0.28,
 			IntervalDays: 3.0,
 			NextDue:      nextDue,
 		})

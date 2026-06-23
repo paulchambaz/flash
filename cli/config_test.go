@@ -15,8 +15,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.Threshold == 0 {
 		t.Error("default Threshold should not be 0")
 	}
-	if cfg.Step == 0 {
-		t.Error("default Step should not be 0")
+	if cfg.Pace == 0 {
+		t.Error("default Pace should not be 0")
 	}
 	if cfg.ServePort == 0 {
 		t.Error("default ServePort should not be 0")
@@ -40,7 +40,7 @@ func TestLoadConfigEnvVars(t *testing.T) {
 	t.Setenv("FLASH_OLLAMA_PASS", "pass1")
 	t.Setenv("FLASH_OLLAMA_MODEL", "llama3")
 	t.Setenv("FLASH_DB", "/env/db.db")
-	t.Setenv("FLASH_STEP", "12h")
+	t.Setenv("FLASH_PACE", "12h")
 	t.Setenv("FLASH_SERVE_PORT", "9999")
 	t.Setenv("FLASH_SERVE_TOKEN", "tok123")
 	t.Setenv("FLASH_REMOTE_PORT", "8443")
@@ -63,8 +63,8 @@ func TestLoadConfigEnvVars(t *testing.T) {
 	if cfg.DB != "/env/db.db" {
 		t.Errorf("DB = %q", cfg.DB)
 	}
-	if cfg.Step != 12*time.Hour {
-		t.Errorf("Step = %v, want 12h", cfg.Step)
+	if cfg.Pace != 12*time.Hour {
+		t.Errorf("Pace = %v, want 12h", cfg.Pace)
 	}
 	if cfg.ServePort != 9999 {
 		t.Errorf("ServePort = %d, want 9999", cfg.ServePort)
@@ -85,7 +85,7 @@ func TestLoadConfigEnvInvalidValues(t *testing.T) {
 
 	t.Setenv("FLASH_SERVE_PORT", "not-a-number")
 	t.Setenv("FLASH_REMOTE_PORT", "not-a-number")
-	t.Setenv("FLASH_STEP", "not-a-duration")
+	t.Setenv("FLASH_PACE", "not-a-duration")
 
 	cfg := loadConfig("")
 	if cfg.ServePort != defaults.ServePort {
@@ -94,8 +94,8 @@ func TestLoadConfigEnvInvalidValues(t *testing.T) {
 	if cfg.RemotePort != defaults.RemotePort {
 		t.Errorf("invalid FLASH_REMOTE_PORT should keep default %d, got %d", defaults.RemotePort, cfg.RemotePort)
 	}
-	if cfg.Step != defaults.Step {
-		t.Errorf("invalid FLASH_STEP should keep default %v, got %v", defaults.Step, cfg.Step)
+	if cfg.Pace != defaults.Pace {
+		t.Errorf("invalid FLASH_PACE should keep default %v, got %v", defaults.Pace, cfg.Pace)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestLoadConfigTOMLFile(t *testing.T) {
 	tomlContent := `
 ollama_url = "http://toml-ollama/api/chat"
 ollama_model = "toml-model"
-step = "12h"
+pace = "12h"
 serve_port = 7777
 remote_token = "toml-token"
 `
@@ -126,8 +126,8 @@ remote_token = "toml-token"
 	if cfg.Model != "toml-model" {
 		t.Errorf("Model = %q", cfg.Model)
 	}
-	if cfg.Step != 12*time.Hour {
-		t.Errorf("Step = %v, want 12h", cfg.Step)
+	if cfg.Pace != 12*time.Hour {
+		t.Errorf("Pace = %v, want 12h", cfg.Pace)
 	}
 	if cfg.ServePort != 7777 {
 		t.Errorf("ServePort = %d, want 7777", cfg.ServePort)

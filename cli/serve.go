@@ -17,6 +17,7 @@ type flashServer struct {
 	token   string
 	dataDir string
 	evalCfg evalConfig
+	pace    time.Duration
 	mu      sync.RWMutex
 	dbs     map[string]*DB
 }
@@ -26,7 +27,7 @@ type reviewRequest struct {
 	Correct       bool    `json:"correct"`
 	Accuracy      float64 `json:"accuracy"`
 	KeywordsScore float64 `json:"keywords_score"`
-	StepSeconds   float64 `json:"step_seconds"`
+	PaceSeconds   float64 `json:"pace_seconds"`
 }
 
 type reviewResponse struct {
@@ -53,6 +54,7 @@ func runServe(cfg appConfig) error {
 		token:   cfg.ServeToken,
 		dataDir: dataDir,
 		evalCfg: evalConfigFrom(cfg),
+		pace:    cfg.Pace,
 		dbs:     make(map[string]*DB),
 	}
 
@@ -100,7 +102,7 @@ func (s *flashServer) getDB(deck string) (*DB, error) {
 		return db, nil
 	}
 	dbPath := filepath.Join(s.dataDir, deck+".db")
-	db, err := openDB(dbPath, 1.0)
+	db, err := openDB(dbPath, s.pace)
 	if err != nil {
 		return nil, err
 	}
@@ -184,11 +186,11 @@ func (s *flashServer) handleReview(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	step := db.step
-	if req.StepSeconds > 0 {
-		step = time.Duration(req.StepSeconds * float64(time.Second))
+	pace := s.pace
+	if req.PaceSeconds > 0 {
+		pace = time.Duration(req.PaceSeconds * float64(time.Second))
 	}
-	sr, err := db.submitReviewWithStep(req.CardID, req.Correct, req.Accuracy, req.KeywordsScore, step)
+	sr, err := db.submitReviewWithPace(req.CardID, req.Correct, req.Accuracy, req.KeywordsScore, pace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -338,7 +340,7 @@ func (s *flashServer) handlePullDeck(w http.ResponseWriter, r *http.Request) {
 type evaluateRequest struct {
 	CardID      int64   `json:"card_id"`
 	Answer      string  `json:"answer"`
-	StepSeconds float64 `json:"step_seconds"`
+	PaceSeconds float64 `json:"pace_seconds"`
 	Threshold   float64 `json:"threshold"`
 }
 
@@ -381,11 +383,11 @@ func (s *flashServer) handleEvaluate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	step := db.step
-	if req.StepSeconds > 0 {
-		step = time.Duration(req.StepSeconds * float64(time.Second))
+	pace := s.pace
+	if req.PaceSeconds > 0 {
+		pace = time.Duration(req.PaceSeconds * float64(time.Second))
 	}
-	sr, err := db.submitReviewWithStep(card.ID, result.correct, result.accuracy, result.keywordsScore, step)
+	sr, err := db.submitReviewWithPace(card.ID, result.correct, result.accuracy, result.keywordsScore, pace)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "submit review: " + err.Error()})
 		return

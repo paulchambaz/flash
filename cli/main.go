@@ -17,9 +17,9 @@ var clif struct {
 	ollamaUser  string
 	ollamaPass  string
 	model       string
-	threshold   string
-	step        string
-	serveHost   string
+	threshold string
+	pace      string
+	serveHost string
 	servePort   string
 	serveToken  string
 	serveData   string
@@ -37,7 +37,7 @@ func main() {
 		"ollama-pass":  &clif.ollamaPass,
 		"model":        &clif.model,
 		"threshold":    &clif.threshold,
-		"step":         &clif.step,
+		"pace":         &clif.pace,
 		"serve-host":   &clif.serveHost,
 		"serve-port":   &clif.servePort,
 		"serve-token":  &clif.serveToken,
@@ -162,7 +162,7 @@ func runShowCmd(target string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Pace)
 	info, err := rs.showDeck()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: show: %v\n", err)
@@ -188,7 +188,7 @@ func runRmCmd(target string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Pace)
 	if err := rs.deleteDeck(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: rm: %v\n", err)
 		os.Exit(1)
@@ -201,7 +201,7 @@ func runListCmd(host string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, "", cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+	rs := newRemoteStore(host, "", cfg.RemoteToken, cfg.RemotePort, cfg.Pace)
 	items, err := rs.listDecks()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: list: %v\n", err)
@@ -256,7 +256,7 @@ func runPushCmd(src, dest string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Pace)
 	if err := rs.pushDeck(content); err != nil {
 		fmt.Fprintf(os.Stderr, "error: push: %v\n", err)
 		os.Exit(1)
@@ -271,7 +271,7 @@ func runResetCmd(arg string) {
 		if resolved, ok := cfg.Aliases[host]; ok {
 			host = resolved
 		}
-		rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+		rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Pace)
 		if err := rs.resetDeck(); err != nil {
 			fmt.Fprintf(os.Stderr, "error: reset: %v\n", err)
 			os.Exit(1)
@@ -279,7 +279,7 @@ func runResetCmd(arg string) {
 		fmt.Printf("Reset %s on %s.\n", deckName, host)
 	} else {
 		cfg := loadConfig(arg)
-		db, err := openDB(cfg.DB, cfg.Step)
+		db, err := openDB(cfg.DB, cfg.Pace)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -316,7 +316,7 @@ func runLocalStudy(deckPath, deckName string) {
 
 	cfg := loadConfig(deckPath)
 
-	database, err := openDB(cfg.DB, cfg.Step)
+	database, err := openDB(cfg.DB, cfg.Pace)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -359,7 +359,7 @@ func runRemoteStudy(host, deckName string) {
 		os.Exit(1)
 	}
 
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Pace)
 
 	due, err := rs.dueCards(deckName)
 	if err != nil {
@@ -415,7 +415,7 @@ func runPullCmd(src, dest string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Pace)
 	content, err := rs.pullDeck()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: pull: %v\n", err)
@@ -440,7 +440,7 @@ func runStatsCmd(arg string) {
 
 func runLocalStats(deckPath, deckName string) {
 	cfg := loadConfig(deckPath)
-	db, err := openDB(cfg.DB, cfg.Step)
+	db, err := openDB(cfg.DB, cfg.Pace)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
@@ -454,7 +454,7 @@ func runRemoteStats(host, deckName string) {
 	if resolved, ok := cfg.Aliases[host]; ok {
 		host = resolved
 	}
-	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Step)
+	rs := newRemoteStore(host, deckName, cfg.RemoteToken, cfg.RemotePort, cfg.Pace)
 	if deckName == "" {
 		activity, err := rs.activity()
 		if err != nil {
@@ -531,7 +531,7 @@ Flags:
   -ollama-pass <str>    HTTP basic auth password
   -model <name>         model name (default: qwen3:4b-...)
   -threshold <0-1>      keyword match threshold (default: 0.7)
-  -step <duration>      minimum review interval (default: 24h)
+  -pace <duration>      maximum review interval (default: 7d)
   -db <path>            SQLite path (default: ~/.local/share/flash/<deck>.db)
   -serve-host <addr>    bind address (default: 0.0.0.0)
   -serve-port <int>     listen port (default: 8765)

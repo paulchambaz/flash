@@ -60,7 +60,7 @@ func (r *remoteStore) submitReview(cardID int64, correct bool, accuracy, keyword
 		Correct:       correct,
 		Accuracy:      accuracy,
 		KeywordsScore: keywordsScore,
-		StepSeconds:   r.step.Seconds(),
+		PaceSeconds:   r.step.Seconds(),
 	})
 	if err != nil {
 		return schedResult{}, err

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 type DB struct {
 	conn *sql.DB
-	step time.Duration
+	pace time.Duration
 }
 
 type CardState struct {
@@ -39,7 +40,7 @@ type Review struct {
 	IntervalDays    float64
 }
 
-func openDB(path string, step time.Duration) (*DB, error) {
+func openDB(path string, pace time.Duration) (*DB, error) {
 	conn, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -47,7 +48,7 @@ func openDB(path string, step time.Duration) (*DB, error) {
 	if _, err := conn.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return nil, fmt.Errorf("wal mode: %w", err)
 	}
-	db := &DB{conn: conn, step: step}
+	db := &DB{conn: conn, pace: pace}
 	return db, db.migrate()
 }
 
@@ -61,7 +62,7 @@ func (db *DB) migrate() error {
 			concept     TEXT    NOT NULL,
 			reference   TEXT    NOT NULL,
 			stability   REAL    NOT NULL DEFAULT 0,
-			difficulty  REAL    NOT NULL DEFAULT 5,
+			difficulty  REAL    NOT NULL DEFAULT 0.28,
 			reps        INTEGER NOT NULL DEFAULT 0,
 			lapses      INTEGER NOT NULL DEFAULT 0,
 			last_review DATETIME,
@@ -79,13 +80,106 @@ func (db *DB) migrate() error {
 			stability_after  REAL NOT NULL,
 			interval_days    REAL NOT NULL
 		);
+		CREATE TABLE IF NOT EXISTS schema_version (
+			version INTEGER PRIMARY KEY
+		);
 	`); err != nil {
 		return err
 	}
-	// Idempotent: add ref_hash column if not present (existing DBs).
+
 	_, err := db.conn.Exec(`ALTER TABLE cards ADD COLUMN ref_hash TEXT NOT NULL DEFAULT ''`)
 	if err != nil && !strings.Contains(err.Error(), "duplicate column name: ref_hash") {
 		return err
+	}
+
+	var version int
+	db.conn.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`).Scan(&version)
+
+	if version < 1 {
+		if err := db.migrateV1(); err != nil {
+			return err
+		}
+		if _, err := db.conn.Exec(`INSERT OR IGNORE INTO schema_version VALUES (1)`); err != nil {
+			return err
+		}
+		version = 1
+	}
+
+	if version < 2 {
+		if err := db.migrateV2(); err != nil {
+			return err
+		}
+		if _, err := db.conn.Exec(`INSERT OR IGNORE INTO schema_version VALUES (2)`); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// migrateV1 converts legacy FSRS stability (days, > 1) to minutes.
+func (db *DB) migrateV1() error {
+	rows, err := db.conn.Query(`SELECT id, stability FROM cards WHERE stability > 1.0`)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id   int64
+		stab float64
+	}
+	var cards []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.stab); err != nil {
+			rows.Close()
+			return err
+		}
+		cards = append(cards, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	const maxMin = 7 * 24 * 60.0
+	for _, c := range cards {
+		minutes := math.Max(hMinMinutes, math.Min(maxMin, c.stab*24*60))
+		if _, err := db.conn.Exec(`UPDATE cards SET stability = ? WHERE id = ?`, minutes, c.id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateV2 converts log-scale [0,1] stability to half-life minutes (10080^s).
+// Handles DBs written by the intermediate log-scale model.
+func (db *DB) migrateV2() error {
+	rows, err := db.conn.Query(`SELECT id, stability FROM cards WHERE stability > 0 AND stability < 1.0`)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id   int64
+		stab float64
+	}
+	var cards []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.stab); err != nil {
+			rows.Close()
+			return err
+		}
+		cards = append(cards, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	const pace = 7 * 24 * 60.0
+	for _, c := range cards {
+		minutes := math.Max(hMinMinutes, math.Min(pace, math.Pow(pace, c.stab)))
+		if _, err := db.conn.Exec(`UPDATE cards SET stability = ? WHERE id = ?`, minutes, c.id); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -151,7 +245,7 @@ func (db *DB) syncCards(deck string, cards []Card) error {
 			if _, err := db.conn.Exec(`
 				UPDATE cards
 				SET reference = ?, ref_hash = ?,
-				    reps = 0, lapses = 0, stability = 0, difficulty = 5,
+				    reps = 0, lapses = 0, stability = 0, difficulty = 0.28,
 				    last_review = NULL, due_date = NULL
 				WHERE deck = ? AND concept = ?`,
 				c.Reference, h, deck, c.Concept,
@@ -215,7 +309,7 @@ func (db *DB) resetDeck(deck string) error {
 	}
 	_, err = db.conn.Exec(`
 		UPDATE cards
-		SET stability=0, difficulty=5, reps=0, lapses=0, last_review=NULL, due_date=NULL
+		SET stability=0, difficulty=0.28, reps=0, lapses=0, last_review=NULL, due_date=NULL
 		WHERE deck = ?
 	`, deck)
 	return err
@@ -290,19 +384,59 @@ func (db *DB) getCard(id int64) (CardState, error) {
 	return c, nil
 }
 
-func (db *DB) submitReview(cardID int64, correct bool, accuracy, keywordsScore float64) (schedResult, error) {
-	return db.submitReviewWithStep(cardID, correct, accuracy, keywordsScore, db.step)
+func (db *DB) reviewHistory(cardID int64) ([]reviewPoint, error) {
+	rows, err := db.conn.Query(`
+		SELECT reviewed_at, correct, accuracy
+		FROM reviews
+		WHERE card_id = ?
+		ORDER BY reviewed_at ASC
+	`, cardID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var points []reviewPoint
+	var prevTime *time.Time
+	for rows.Next() {
+		var ts sql.NullString
+		var correct bool
+		var accuracy float64
+		if err := rows.Scan(&ts, &correct, &accuracy); err != nil {
+			return nil, err
+		}
+		t, err := scanNullTime(ts)
+		if err != nil || t == nil {
+			continue
+		}
+		var dt float64
+		if prevTime != nil {
+			dt = t.Sub(*prevTime).Minutes()
+		}
+		points = append(points, reviewPoint{dtMinutes: dt, correct: correct, accuracy: accuracy})
+		prevTime = t
+	}
+	return points, rows.Err()
 }
 
-func (db *DB) submitReviewWithStep(cardID int64, correct bool, accuracy, keywordsScore float64, step time.Duration) (schedResult, error) {
+func (db *DB) submitReview(cardID int64, correct bool, accuracy, keywordsScore float64) (schedResult, error) {
+	return db.submitReviewWithPace(cardID, correct, accuracy, keywordsScore, db.pace)
+}
+
+func (db *DB) submitReviewWithPace(cardID int64, correct bool, accuracy, keywordsScore float64, pace time.Duration) (schedResult, error) {
 	card, err := db.getCard(cardID)
 	if err != nil {
 		return schedResult{}, fmt.Errorf("get card: %w", err)
 	}
 
+	history, err := db.reviewHistory(cardID)
+	if err != nil {
+		return schedResult{}, fmt.Errorf("review history: %w", err)
+	}
+
 	stabilityBefore := card.Stability
 	now := time.Now()
-	sr := schedule(card, correct, accuracy, step, now)
+	sr := schedule(card, history, correct, accuracy, pace, now)
 
 	nowUTC := now.UTC()
 	nextDue := sr.nextDue.UTC()

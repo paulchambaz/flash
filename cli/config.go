@@ -18,7 +18,7 @@ type appConfig struct {
 	Password  string
 	Model     string
 	Threshold float64
-	Step      time.Duration
+	Pace      time.Duration
 
 	ServeHost  string
 	ServePort  int
@@ -38,7 +38,7 @@ type fileConfig struct {
 	Password  string  `toml:"ollama_pass"`
 	Model     string  `toml:"ollama_model"`
 	Threshold float64 `toml:"threshold"`
-	Step      string  `toml:"step"`
+	Pace      string  `toml:"pace"`
 
 	ServeHost  string `toml:"serve_host"`
 	ServePort  int    `toml:"serve_port"`
@@ -51,9 +51,23 @@ type fileConfig struct {
 	Aliases map[string]string `toml:"aliases"`
 }
 
-// parseDuration extends time.ParseDuration with 'd' (day) and 'w' (week) units.
+// parseDuration extends time.ParseDuration with 'd', 'w', 'mo', and 'y' units.
 func parseDuration(s string) (time.Duration, error) {
 	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, "y") {
+		n, err := strconv.ParseFloat(strings.TrimSuffix(s, "y"), 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+		return time.Duration(n * float64(365*24*time.Hour)), nil
+	}
+	if strings.HasSuffix(s, "mo") {
+		n, err := strconv.ParseFloat(strings.TrimSuffix(s, "mo"), 64)
+		if err != nil {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+		return time.Duration(n * float64(30*24*time.Hour)), nil
+	}
 	if strings.HasSuffix(s, "w") {
 		n, err := strconv.ParseFloat(strings.TrimSuffix(s, "w"), 64)
 		if err != nil {
@@ -92,7 +106,7 @@ func loadConfig(deckPath string) appConfig {
 	cfg := appConfig{
 		Model:      "qwen3:4b-instruct-2507-q4_K_M",
 		Threshold:  0.7,
-		Step:       24 * time.Hour,
+		Pace:       7 * 24 * time.Hour,
 		ServeHost:  "0.0.0.0",
 		ServePort:  8765,
 		RemotePort: 443,
@@ -133,9 +147,9 @@ func loadConfig(deckPath string) appConfig {
 			if fc.Threshold > 0 {
 				cfg.Threshold = fc.Threshold
 			}
-			if fc.Step != "" {
-				if d, err := parseDuration(fc.Step); err == nil && d > 0 {
-					cfg.Step = d
+			if fc.Pace != "" {
+				if d, err := parseDuration(fc.Pace); err == nil && d > 0 {
+					cfg.Pace = d
 				}
 			}
 			if fc.ServeHost != "" {
@@ -185,9 +199,9 @@ func loadConfig(deckPath string) appConfig {
 			cfg.Threshold = f
 		}
 	}
-	if v := os.Getenv("FLASH_STEP"); v != "" {
+	if v := os.Getenv("FLASH_PACE"); v != "" {
 		if d, err := parseDuration(v); err == nil && d > 0 {
-			cfg.Step = d
+			cfg.Pace = d
 		}
 	}
 	if v := os.Getenv("FLASH_DB"); v != "" {
@@ -234,9 +248,9 @@ func loadConfig(deckPath string) appConfig {
 			cfg.Threshold = f
 		}
 	}
-	if clif.step != "" {
-		if d, err := parseDuration(clif.step); err == nil && d > 0 {
-			cfg.Step = d
+	if clif.pace != "" {
+		if d, err := parseDuration(clif.pace); err == nil && d > 0 {
+			cfg.Pace = d
 		}
 	}
 	if clif.db != "" {

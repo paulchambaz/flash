@@ -155,7 +155,7 @@ func TestServeHandleReview(t *testing.T) {
 		Correct:       true,
 		Accuracy:      0.9,
 		KeywordsScore: 1.0,
-		StepSeconds:   86400.0,
+		PaceSeconds:   86400.0,
 	})
 	req := authRequest(t, "POST", srv.URL+"/decks/testdeck/cards/review", body, "application/json")
 	resp := do(t, req)
@@ -182,7 +182,7 @@ func TestServeHandleReset(t *testing.T) {
 	json.NewDecoder(dueResp.Body).Decode(&cards)
 	dueResp.Body.Close()
 
-	body, _ := json.Marshal(reviewRequest{CardID: cards[0].ID, Correct: true, Accuracy: 1.0, KeywordsScore: 1.0, StepSeconds: 86400.0})
+	body, _ := json.Marshal(reviewRequest{CardID: cards[0].ID, Correct: true, Accuracy: 1.0, KeywordsScore: 1.0, PaceSeconds: 86400.0})
 	reviewReq := authRequest(t, "POST", srv.URL+"/decks/testdeck/cards/review", body, "application/json")
 	do(t, reviewReq).Body.Close()
 
